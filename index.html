@@ -37,6 +37,11 @@
         <span>🔔 알림을 켜면 정해진 시각에 알려드려요.</span>
         <button class="chip-btn primary" id="bannerEnable">알림 켜기</button>
       </div>
+      <div class="tip-card" id="lockTip" hidden>
+        <span>📱 잠금화면에 오늘 할 일을 띄워 보세요</span>
+        <button class="chip-btn primary" id="lockTipOpen">설정하기</button>
+        <button class="x" id="lockTipClose" aria-label="안내 닫기">✕</button>
+      </div>
       <nav class="tabs" role="tablist">
         <button role="tab" data-view="today" class="tab">오늘 <b id="cntToday"></b></button>
         <button role="tab" data-view="upcoming" class="tab">예정 <b id="cntUpcoming"></b></button>
@@ -135,6 +140,11 @@
         </label>
         <label class="field" id="hourlyStartField" hidden><span>시작</span><input type="time" name="startTime" /></label>
         <label class="field" id="hourlyEndField" hidden><span>끝</span><input type="time" name="endTime" /></label>
+        <div class="field icon-pick" id="iconPick" hidden>
+          <span>표시 아이콘 <small>“💧 3/7회”처럼 보여요</small></span>
+          <div class="icon-row" id="iconRow" role="group" aria-label="아이콘 고르기"></div>
+          <label class="icon-custom">직접 넣기 <input type="text" name="icon" maxlength="8" autocomplete="off" placeholder="😀" aria-label="아이콘 직접 입력" /></label>
+        </div>
       </div>
       <div class="repeat-box" id="repeatBox" hidden>
         <div id="weekdayBox" hidden>
@@ -267,37 +277,11 @@
         </div>
       </section>
       <section class="set-group" id="feedSection">
-        <h3>📅 아이폰 캘린더 · 위젯에 보이기</h3>
-        <div id="feedOff">
-          <p class="hint">할 일이 아이폰 <b>캘린더 앱</b>과 홈 화면·잠금화면의 <b>캘린더 위젯</b>에 일정처럼 보여요. 완료는 이 앱에서 해요.</p>
-          <p class="hint">⚠ 캘린더가 읽을 수 있도록, 켜면 할 일 제목·메모가 <b>암호화되지 않은 채</b> 서버에 올라가요. 구독 주소를 아는 사람만 볼 수 있어요.</p>
-          <div class="set-actions"><button class="chip-btn primary" id="feedStartBtn">캘린더 구독 켜기</button></div>
-        </div>
-        <div id="feedOn" hidden>
-          <div class="set-actions">
-            <a class="chip-btn primary" id="feedSubscribe" href="#">아이폰 캘린더에 추가</a>
-            <button class="chip-btn" id="feedCopyBtn">주소 복사</button>
-          </div>
-          <p class="set-status" id="feedStatus"></p>
-          <details class="set-more">
-            <summary>버튼이 안 되면 (직접 추가하기)</summary>
-            <ol class="steps">
-              <li>위의 <b>주소 복사</b>를 눌러요</li>
-              <li>아이폰 <b>설정 → 앱 → 캘린더 → 캘린더 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b></li>
-              <li>복사한 주소를 붙여넣고 <b>다음 → 저장</b></li>
-            </ol>
-          </details>
-          <details class="set-more">
-            <summary>홈 화면 · 잠금화면에 위젯 놓기</summary>
-            <ol class="steps">
-              <li>홈 화면 빈 곳을 길게 누르기 → 왼쪽 위 <b>편집 → 위젯 추가</b></li>
-              <li><b>캘린더</b> → <b>다음 일정</b> 또는 <b>목록</b> 위젯 선택 → 추가</li>
-              <li>잠금화면: 잠금화면을 길게 누르기 → <b>사용자화</b> → 잠금화면 → 위젯 칸 → <b>캘린더</b></li>
-            </ol>
-            <p class="hint">아이폰이 구독 캘린더를 주기적으로 새로 가져와서, 앱에서 바꾼 내용이 캘린더에 보이기까지 시간이 조금 걸릴 수 있어요.</p>
-          </details>
-          <div class="set-actions"><button class="chip-btn danger" id="feedStopBtn">캘린더 구독 끄기</button></div>
-        </div>
+        <h3>📱 잠금화면 · 위젯에 할 일 띄우기</h3>
+        <p class="hint">할 일이 아이폰 잠금화면과 홈 화면의 <b>캘린더 위젯</b>에 보여요. 3단계면 끝나요.</p>
+        <div class="set-actions"><button class="chip-btn primary" id="lockGuideOpen">3단계로 설정하기</button></div>
+        <p class="set-status" id="feedStatus"></p>
+        <div class="set-actions" id="feedOnActions" hidden><button class="chip-btn danger" id="feedStopBtn">캘린더 구독 끄기</button></div>
       </section>
       <section class="set-group">
         <h3>데이터</h3>
@@ -308,6 +292,85 @@
         </div>
         <p class="hint">할 일은 이 기기의 브라우저에만 저장됩니다.</p>
       </section>
+    </div>
+  </div>
+
+  <!-- 잠금화면에 띄우기 안내 (3단계) -->
+  <div class="sheet-backdrop" id="lockGuideBackdrop" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2>📱 잠금화면에 할 일 띄우기</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">✕</button>
+      </div>
+      <div class="guide-hero" aria-hidden="true">
+        <svg viewBox="0 0 220 150" width="220" height="150">
+          <rect x="60" y="4" width="100" height="142" rx="18" fill="var(--surface)" stroke="var(--line)" stroke-width="2"/>
+          <text x="110" y="40" text-anchor="middle" font-size="22" font-weight="700" fill="var(--text)">9:41</text>
+          <text x="110" y="56" text-anchor="middle" font-size="8" fill="var(--text-2)">10월 24일 토요일</text>
+          <rect x="70" y="64" width="80" height="34" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="77" y="78" font-size="7.5" font-weight="700" fill="var(--accent)">💧 물 마시기</text>
+          <text x="77" y="90" font-size="7" fill="var(--text-2)">오전 9시 · 2시간마다</text>
+          <text x="110" y="122" text-anchor="middle" font-size="7" fill="var(--text-3)">← 여기에 오늘 할 일이 보여요</text>
+        </svg>
+      </div>
+
+      <ol class="guide">
+        <li class="guide-step" id="gStep1">
+          <div class="g-num">1</div>
+          <div class="g-body">
+            <b>캘린더 구독 켜기</b>
+            <p>이 앱의 할 일을 캘린더 형식으로 내보내요.</p>
+            <button class="chip-btn primary" id="feedStartBtn">켜기</button>
+            <p class="g-done">✅ 켜졌어요</p>
+            <p class="g-note">캘린더가 읽을 수 있도록 할 일 제목·메모가 암호화 없이 서버에 올라가요. 구독 주소를 아는 사람만 볼 수 있어요.</p>
+          </div>
+        </li>
+        <li class="guide-step" id="gStep2">
+          <div class="g-num">2</div>
+          <div class="g-body">
+            <b>아이폰 캘린더에 추가</b>
+            <p>아래 버튼 → 아이폰이 물어보면 <b>구독</b> → <b>완료</b></p>
+            <div class="set-actions">
+              <a class="chip-btn primary" id="feedSubscribe" href="#">캘린더에 추가</a>
+              <button class="chip-btn" id="feedCopyBtn">주소 복사</button>
+            </div>
+            <details class="set-more">
+              <summary>버튼을 눌러도 아무 일도 없으면</summary>
+              <ol class="steps">
+                <li><b>주소 복사</b>를 눌러요</li>
+                <li>아이폰 <b>설정 → 앱 → 캘린더 → 캘린더 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b></li>
+                <li>붙여넣기 → <b>다음</b> → <b>저장</b></li>
+              </ol>
+            </details>
+            <label class="g-check"><input type="checkbox" id="gCheck2" /> 추가했어요</label>
+          </div>
+        </li>
+        <li class="guide-step" id="gStep3">
+          <div class="g-num">3</div>
+          <div class="g-body">
+            <b>잠금화면에 위젯 놓기</b>
+            <ol class="steps">
+              <li>화면을 잠그고, 잠금화면을 <b>꾹 누르기</b></li>
+              <li>아래의 <b>사용자화</b> → 왼쪽 <b>잠금화면</b> 누르기</li>
+              <li>시계 아래 <b>위젯 칸(＋)</b> 누르기 → <b>캘린더</b></li>
+              <li><b>다음 일정</b>(넓은 칸) 고르기 → 오른쪽 위 <b>완료</b></li>
+            </ol>
+            <p class="g-note">홈 화면에도: 빈 곳 꾹 → 왼쪽 위 <b>편집 → 위젯 추가 → 캘린더 → 목록</b></p>
+            <label class="g-check"><input type="checkbox" id="gCheck3" /> 놓았어요</label>
+          </div>
+        </li>
+      </ol>
+
+      <div class="guide-tip">
+        <b>💡 더 잘 보이게</b>
+        <ul>
+          <li><b>시간을 정한 할 일</b>이 위젯에 잘 보여요. (예: “오후 3시 치과”)</li>
+          <li>빨리 반영되게: 아이폰 <b>설정 → 앱 → 캘린더 → 캘린더 계정 → 데이터 가져오기</b> → <b>15분마다</b></li>
+          <li>캘린더 앱의 <b>캘린더</b> 목록에서 <b>to do list</b>가 체크돼 있어야 해요.</li>
+        </ul>
+      </div>
+      <p class="guide-finish" id="guideFinish" hidden>🎉 다 됐어요! 이제 잠금화면에서 할 일을 볼 수 있어요.</p>
     </div>
   </div>
 

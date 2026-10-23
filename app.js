@@ -279,6 +279,25 @@ function hourlySlots(x) {
   return slots;
 }
 const slotCountToday = (x) => (x.slotDate === x.due ? x.slotCount || 0 : 0);
+
+// 몇 시간마다 할 일의 표시 아이콘 (직접 고를 수 있고, 안 고르면 제목으로 추측)
+const ICON_CHOICES = ['💧', '💊', '🧘', '💪', '🚶', '👀', '☕', '📖', '🧹', '🍎', '🦷', '⏰'];
+function guessIcon(title = '') {
+  const rules = [
+    [/물|수분/, '💧'], [/약|영양제|비타민|유산균/, '💊'], [/스트레칭|요가|명상|호흡/, '🧘'],
+    [/운동|팔굽|스쿼트|헬스|플랭크/, '💪'], [/걷|산책|일어나|만보|계단/, '🚶'], [/눈/, '👀'],
+    [/커피|차 마시/, '☕'], [/독서|책|공부|단어|암기/, '📖'], [/청소|정리|환기/, '🧹'],
+    [/과일|간식|식사|밥/, '🍎'], [/양치|치실/, '🦷'],
+  ];
+  return rules.find(([re]) => re.test(title))?.[1] || '⏰';
+}
+const iconOf = (x) => x.icon || guessIcon(x.title);
+function firstGrapheme(s) {
+  const v = String(s || '').trim();
+  if (!v) return '';
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) return [...new Intl.Segmenter().segment(v)][0]?.segment || '';
+  return Array.from(v).slice(0, 2).join('');
+}
 function nextSlotToday(x) {
   if (!x.due || x.due !== todayStr()) return null;
   const now = Date.now();
@@ -534,7 +553,7 @@ function taskHTML(x) {
     const showDate = !(view === 'today' && x.due === t) && !(view === 'upcoming');
     if (showDate || late) meta.push(`<span class="${late ? 'late' : ''}">${late ? '⚠ ' : ''}${esc(dateLabel(x.due))}</span>`);
     const total = hourlySlots(x).length;
-    meta.push(`<span class="slots">💧 ${slotCountToday(x)}/${total}회</span>`);
+    meta.push(`<span class="slots">${esc(iconOf(x))} ${slotCountToday(x)}/${total}회</span>`);
     const next = nextSlotToday(x);
     if (next) meta.push(`<span class="${at(x.due, next) - Date.now() < 3600e3 ? 'soon' : ''}">다음 ${timeLabel(next)}</span>`);
     meta.push(`<span>🔁 ${esc(repeatLabel(x))} · ${x.everyHours}시간마다</span>`);
@@ -654,7 +673,7 @@ function toggleDone(id, { animate = true } = {}) {
       save();
       render();
       const next = nextSlotToday(x);
-      toast(`💧 ${count}/${total}회 했어요${next ? ` · 다음 ${timeLabel(next)}` : ''}`, () => restore(before));
+      toast(`${iconOf(x)} ${count}/${total}회 했어요${next ? ` · 다음 ${timeLabel(next)}` : ''}`, () => restore(before));
       return;
     }
   }
@@ -789,6 +808,7 @@ function newTask(data) {
     repeatUntil: data.repeatUntil || null,
     everyHours: data.everyHours || null,
     endTime: data.endTime || null,
+    icon: data.everyHours ? firstGrapheme(data.icon) || guessIcon(data.title) : null,
     anchorDay: data.anchorDay || null,
     important: !!data.important,
     done: false,
@@ -821,7 +841,7 @@ const preview = $('#parsePreview');
 function previewPills(p) {
   const pills = [];
   if (p.due) pills.push(`📅 ${dateLabel(p.due)}`);
-  if (p.everyHours) pills.push(`💧 ${hourlyLabel(p)} (하루 ${hourlySlots(p).length}번)`);
+  if (p.everyHours) pills.push(`${iconOf(p)} ${hourlyLabel(p)} (하루 ${hourlySlots(p).length}번)`);
   else if (p.time) pills.push(`⏰ ${timeLabel(p.time)}`);
   if (p.repeat !== 'none') pills.push(`🔁 ${repeatLabel(p)}`);
   if (p.important) pills.push('⭐ 중요');
@@ -878,6 +898,7 @@ function openEditor(task, prefill = {}) {
   setRepeatUI(rep, src.repeatUntil || '');
   form.startTime.value = src.everyHours ? src.time || '' : '';
   form.endTime.value = src.endTime || '';
+  form.icon.value = src.everyHours ? src.icon || guessIcon(src.title) : '';
   setHourlyUI(src.everyHours || null);
   form.important.checked = !!src.important;
   $('#deleteBtn').hidden = !task;
@@ -939,13 +960,31 @@ function renderRepeatUI() {
 }
 
 /* 하루 중 몇 시간마다 */
+// 아이콘 고르기: 자주 쓰는 것 12개 + 직접 넣기(이모지 키보드)
+$('#iconRow').innerHTML = ICON_CHOICES.map((ic) => `<button type="button" data-icon="${ic}" aria-label="${ic}">${ic}</button>`).join('');
+function renderIconPick() {
+  const cur = firstGrapheme(form.icon.value);
+  $$('#iconRow button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.icon === cur)));
+}
+$('#iconRow').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-icon]');
+  if (!b) return;
+  form.icon.value = b.dataset.icon;
+  renderIconPick();
+});
+form.icon.addEventListener('input', renderIconPick);
+form.icon.addEventListener('change', () => { form.icon.value = firstGrapheme(form.icon.value); renderIconPick(); });
+
 function setHourlyUI(every) {
   form.everyHours.value = every ? String(every) : '';
   const on = !!every;
   $('#hourlyStartField').hidden = !on;
   $('#hourlyEndField').hidden = !on;
+  $('#iconPick').hidden = !on;
   form.time.closest('.field').hidden = on; // 시간 칸 대신 시작~끝
   if (on) {
+    if (!form.icon.value) form.icon.value = guessIcon(form.title.value);
+    renderIconPick();
     form.startTime.value = form.startTime.value || form.time.value || '09:00';
     form.endTime.value = form.endTime.value || '21:00';
     form.time.value = form.startTime.value;
@@ -1010,6 +1049,7 @@ form.addEventListener('submit', (e) => {
     repeatUntil: form.repeat.value !== 'none' ? form.until.value || null : null,
     everyHours: Number(form.everyHours.value) || null,
     endTime: form.everyHours.value ? form.endTime.value || '21:00' : null,
+    icon: form.everyHours.value ? firstGrapheme(form.icon.value) || guessIcon(title) : null,
     important: form.important.checked,
   };
   if (data.everyHours) data.time = form.startTime.value || '09:00';
@@ -1361,7 +1401,7 @@ async function showSystemNotification(title, opts) {
 
 function notifyTask(x) {
   const parts = [];
-  if (x.everyHours) parts.push(`💧 ${slotCountToday(x)}/${hourlySlots(x).length}회 했어요`);
+  if (x.everyHours) parts.push(`${iconOf(x)} ${slotCountToday(x)}/${hourlySlots(x).length}회 했어요`);
   else if (x.time) parts.push(`${x.due === todayStr() ? '' : `${dateLabel(x.due)} `}${timeLabel(x.time)}`);
   else parts.push(dateLabel(x.due));
   if (x.note) parts.push(x.note);
@@ -1551,7 +1591,7 @@ function hourlyReminders(x) {
   const slots = hourlySlots(x);
   const list = [];
   if (x.snoozeUntil && x.snoozeUntil > now) {
-    list.push({ id: `${x.id}@${x.due}Tsnooze`, fireAt: x.snoozeUntil, title: x.title, body: `💧 ${slotCountToday(x)}/${slots.length}회 · 다시 알림` });
+    list.push({ id: `${x.id}@${x.due}Tsnooze`, fireAt: x.snoozeUntil, title: x.title, body: `${iconOf(x)} ${slotCountToday(x)}/${slots.length}회 · 다시 알림` });
   }
   for (const d of occurrencesBetween(x, x.due, addDays(todayStr(), HOURLY_HORIZON_DAYS))) {
     slots.forEach((s, i) => {
@@ -1560,7 +1600,7 @@ function hourlyReminders(x) {
       const done = d === x.due ? slotCountToday(x) : 0;
       list.push({
         id: `${x.id}@${d}T${s}`, fireAt: f, title: x.title,
-        body: [`💧 ${i + 1}번째 (${done}/${slots.length}회 했어요)`, x.note].filter(Boolean).join(' · '),
+        body: [`${iconOf(x)} ${i + 1}번째 (${done}/${slots.length}회 했어요)`, x.note].filter(Boolean).join(' · '),
       });
     });
   }
@@ -1600,7 +1640,7 @@ function briefingReminders() {
     first = false;
     if (!items.length && !overdue) continue;
     const names = items.slice(0, 4).map((x) => (x.everyHours
-      ? `${x.title} ${x.everyHours}시간마다`
+      ? `${iconOf(x)} ${x.title} ${x.everyHours}시간마다`
       : `${x.time ? `${timeLabel(x.time)} ` : ''}${x.title}`));
     if (items.length > 4) names.push(`외 ${items.length - 4}개`);
     if (overdue) names.push(`밀린 일 ${overdue}개`);
@@ -2019,7 +2059,8 @@ const randomHex = (n) => toHex(crypto.getRandomValues(new Uint8Array(n)));
 const feedUrl = (scheme = 'https') => `${API_BASE.replace(/^https:/, `${scheme}:`)}/cal/${settings.calFeed.id}.ics`;
 
 function feedEvent(x, date, prefix = '', allDay = false) {
-  const title = `${prefix}${x.important ? '⭐ ' : ''}${x.title}${x.everyHours && !x.done ? ` (${x.everyHours}시간마다)` : ''}`;
+  const hourly = x.everyHours && !x.done;
+  const title = `${prefix}${x.important ? '⭐ ' : ''}${hourly ? `${iconOf(x)} ` : ''}${x.title}${hourly ? ` (${x.everyHours}시간마다)` : ''}`;
   const base = { uid: `${x.id}@${date}`, title, note: x.note || '' };
   if (x.everyHours && !x.done && !allDay) {
     // 시작~끝 시간을 하나의 일정으로
@@ -2072,29 +2113,69 @@ async function publishFeed() {
     feedError = err.code || err.message || String(err);
     return false;
   } finally {
-    if (!settingsBackdrop.hidden) renderFeedSettings();
+    renderFeedSettings();
   }
 }
 
 function renderFeedSettings() {
   const on = !!settings.calFeed;
   $('#feedSection').hidden = !API_BASE;
-  $('#feedOff').hidden = on;
-  $('#feedOn').hidden = !on;
-  if (!on) return;
-  $('#feedSubscribe').href = feedUrl('webcal');
+  $('#feedOnActions').hidden = !on;
+  renderLockGuide();
+  if (!on) { $('#feedStatus').textContent = ''; return; }
   const last = settings.calFeed.last ? new Date(settings.calFeed.last) : null;
   $('#feedStatus').textContent = feedError
     ? `⚠ 캘린더에 올리지 못했어요 (${feedError}). 인터넷 연결을 확인해 주세요.`
-    : last ? `✅ 캘린더에 올림: ${dateLabel(ymd(last))} ${timeLabel(`${pad(last.getHours())}:${pad(last.getMinutes())}`)}` : '올리는 중…';
+    : last ? `✅ 캘린더 구독 켜짐 · 마지막 반영 ${dateLabel(ymd(last))} ${timeLabel(`${pad(last.getHours())}:${pad(last.getMinutes())}`)}` : '올리는 중…';
 }
+
+/* 잠금화면 3단계 안내: ① 구독 켜기 ② 아이폰 캘린더에 추가 ③ 잠금화면 위젯 */
+const lockGuideBackdrop = $('#lockGuideBackdrop');
+function renderLockGuide() {
+  const on = !!settings.calFeed;
+  const g = settings.lockGuide || {};
+  $('#gStep1').classList.toggle('done', on);
+  for (const [n, done] of [[2, g.s2], [3, g.s3]]) {
+    $(`#gStep${n}`).classList.toggle('locked', !on);
+    $(`#gStep${n}`).classList.toggle('done', on && !!done);
+    $(`#gCheck${n}`).checked = !!done;
+  }
+  if (on) $('#feedSubscribe').href = feedUrl('webcal');
+  $('#guideFinish').hidden = !(on && g.s2 && g.s3);
+  $('#lockTip').hidden = !API_BASE || on || !!settings.lockTipDismissed;
+}
+function openLockGuide() {
+  closeSheet(settingsBackdrop);
+  renderLockGuide();
+  openSheet(lockGuideBackdrop);
+}
+function setGuideStep(key, value) {
+  settings.lockGuide = { ...(settings.lockGuide || {}), [key]: value };
+  safeSet(SETTINGS_KEY, settings);
+  renderLockGuide();
+}
+$('#lockGuideOpen').addEventListener('click', openLockGuide);
+$('#lockTipOpen').addEventListener('click', openLockGuide);
+$('#lockTipClose').addEventListener('click', () => {
+  settings.lockTipDismissed = true;
+  safeSet(SETTINGS_KEY, settings);
+  renderLockGuide();
+  toast('설정 → “잠금화면 · 위젯에 할 일 띄우기”에서 언제든 할 수 있어요');
+});
+$('#feedSubscribe').addEventListener('click', () => setTimeout(() => setGuideStep('s2', true), 500));
+$('#gCheck2').addEventListener('change', (e) => setGuideStep('s2', e.target.checked));
+$('#gCheck3').addEventListener('change', (e) => {
+  setGuideStep('s3', e.target.checked);
+  if (e.target.checked && settings.lockGuide?.s2) toast('🎉 다 됐어요! 잠금화면을 확인해 보세요');
+});
 
 $('#feedStartBtn').addEventListener('click', async () => {
   settings.calFeed = { id: randomHex(16), token: randomHex(32), last: 0 };
   safeSet(SETTINGS_KEY, settings);
   renderFeedSettings();
   const ok = await publishFeed();
-  toast(ok ? '📅 준비됐어요. “아이폰 캘린더에 추가”를 눌러 주세요' : '서버에 연결하지 못했어요');
+  if (!ok) { settings.calFeed = null; safeSet(SETTINGS_KEY, settings); renderFeedSettings(); }
+  toast(ok ? '✅ 1단계 완료! 이제 “캘린더에 추가”를 눌러 주세요' : '서버에 연결하지 못했어요. 잠시 뒤 다시 눌러 주세요');
 });
 $('#feedCopyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(feedUrl('https')); toast('구독 주소를 복사했어요'); } catch { toast('복사하지 못했어요'); }
@@ -2104,6 +2185,7 @@ $('#feedStopBtn').addEventListener('click', async () => {
   const feed = settings.calFeed;
   try { await api('/feed/delete', { feed: feed.id, token: feed.token }); } catch { /* 이미 없으면 무시 */ }
   settings.calFeed = null;
+  settings.lockGuide = {};
   safeSet(SETTINGS_KEY, settings);
   renderFeedSettings();
   toast('캘린더 구독을 껐어요');
@@ -2273,6 +2355,7 @@ if (clearExpiredPauses()) safeSet(STORE_KEY, tasks);
 const legacyRoutines = tasks.filter((x) => !x.done && (x.repeat === 'weekdays' || (x.repeat === 'weekly' && !x.repeatDays?.length)));
 if (legacyRoutines.length) { legacyRoutines.forEach(normalizeRepeat); save(); }
 render();
+renderLockGuide(); // 첫 화면의 "잠금화면에 띄우기" 안내 카드
 scheduleReminders();
 syncData();
 // 앱을 열 때마다 구독을 다시 확인 (iOS는 구독이 바뀌거나 만료될 수 있음)
