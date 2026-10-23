@@ -162,6 +162,10 @@
           <span>날짜만 있고 시간이 없는 할 일의 알림 시각</span>
           <input type="time" id="defaultTime" />
         </label>
+        <div class="brief-row">
+          <label class="toggle"><input type="checkbox" id="briefOn" /><span>☀️ 아침 브리핑 (그날 할 일을 알림 하나로)</span></label>
+          <input type="time" id="briefTime" class="time-mini" aria-label="브리핑 시각" />
+        </div>
         <p class="set-status" id="pushStatus"></p>
         <div class="set-actions">
           <button class="chip-btn" id="lockTestBtn" hidden>잠금화면 테스트 (1분 뒤)</button>
@@ -190,6 +194,43 @@
         <p class="hint" id="installHint"></p>
         <button class="chip-btn primary" id="installBtn" hidden>홈 화면에 설치</button>
       </section>
+      <section class="set-group" id="syncSection">
+        <h3>☁️ 자동 백업 · 기기 동기화</h3>
+        <div id="syncOff">
+          <p class="hint">켜 두면 할 일이 자동으로 백업돼요. 폰을 바꾸거나 앱을 지워도 되살릴 수 있고, PC에서도 같은 목록을 볼 수 있어요. 내용은 이 기기에서 암호화돼서 서버도 읽을 수 없어요.</p>
+          <div class="set-actions"><button class="chip-btn primary" id="syncStartBtn">자동 백업 켜기</button></div>
+          <details class="set-more">
+            <summary>다른 기기에서 이미 켰어요 (코드로 연결)</summary>
+            <div class="pause-row">
+              <label class="field"><span>동기화 코드 16자리</span><input type="text" id="syncJoinInput" autocomplete="off" autocapitalize="characters" placeholder="ABCD-EFGH-JKLM-NPQR" /></label>
+              <button class="chip-btn primary" id="syncJoinBtn">연결</button>
+            </div>
+          </details>
+        </div>
+        <div id="syncOn" hidden>
+          <p class="hint">동기화 코드 — 다른 기기에서 이 코드를 입력하면 같은 목록을 써요. <b>꼭 메모해 두세요.</b> 코드를 잃어버리면 백업을 되살릴 수 없어요.</p>
+          <div class="code-box"><span id="syncCode"></span><button class="chip-btn" id="syncCopyBtn">복사</button></div>
+          <p class="set-status" id="syncStatus"></p>
+          <div class="set-actions">
+            <button class="chip-btn" id="syncNowBtn">지금 백업</button>
+            <button class="chip-btn danger" id="syncStopBtn">이 기기에서 끄기</button>
+          </div>
+          <details class="set-more">
+            <summary>🎙 Siri로 할 일 추가하기 (단축어 설정)</summary>
+            <p class="hint">“시리야, 할 일 추가” → 말하기 → 바로 등록돼요. 아이폰 <b>단축어</b> 앱에서 한 번만 만들면 돼요.</p>
+            <ol class="steps">
+              <li>단축어 앱 → 오른쪽 위 <b>+</b> → 이름을 <b>할 일 추가</b>로 바꾸기</li>
+              <li>동작 추가 → <b>입력 요청</b> (질문: “무엇을 추가할까요?”)</li>
+              <li>동작 추가 → <b>URL 인코딩</b> (입력: ‘제공된 입력’)</li>
+              <li>동작 추가 → <b>텍스트</b> → 아래 주소를 붙여넣고, 맨 끝에 변수 <b>‘URL 인코딩된 텍스트’</b>를 넣기</li>
+              <li>동작 추가 → <b>URL의 콘텐츠 가져오기</b></li>
+              <li>(선택) 동작 추가 → <b>결과 보기</b> → “✅ 추가했어요”가 보이면 성공</li>
+            </ol>
+            <div class="code-box"><span id="siriUrl" style="font-size:12px;letter-spacing:0;font-weight:500"></span><button class="chip-btn" id="siriCopyBtn">복사</button></div>
+            <p class="hint">Siri로 넣은 할 일은 다음에 앱을 열 때 목록에 들어오고, 그때부터 알림이 잡혀요. 이 주소는 다른 사람에게 알려 주지 마세요.</p>
+          </details>
+        </div>
+      </section>
       <section class="set-group">
         <h3>데이터</h3>
         <div class="set-actions">
@@ -199,6 +240,22 @@
         </div>
         <p class="hint">할 일은 이 기기의 브라우저에만 저장됩니다.</p>
       </section>
+    </div>
+  </div>
+
+  <!-- 빠른 미루기 시트 (길게 누르기) -->
+  <div class="sheet-backdrop" id="quickBackdrop" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2 id="quickTitle">미루기</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">✕</button>
+      </div>
+      <div class="quick-grid" id="quickOptions"></div>
+      <div class="sheet-actions">
+        <button type="button" class="ghost danger" id="quickDelete">삭제</button>
+        <button type="button" class="ghost" id="quickEdit">날짜 직접 고르기 · 편집</button>
+      </div>
     </div>
   </div>
 

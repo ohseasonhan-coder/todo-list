@@ -109,13 +109,61 @@ h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
 .section-head .count { color: var(--text-3); font-weight: 600; }
 .section-head.overdue { color: var(--danger); }
 
-.task {
-  display: flex; align-items: flex-start; gap: 12px;
-  background: var(--surface); border-radius: var(--radius); padding: 13px 12px 13px 14px; margin-bottom: 8px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.03); border: 1px solid var(--line);
-  transition: opacity .25s, transform .25s;
+.swipe {
+  position: relative; margin-bottom: 8px; border-radius: var(--radius);
+  touch-action: pan-y; transition: opacity .25s, transform .25s;
 }
-.task.leaving { opacity: 0; transform: translateX(24px); }
+.swipe.leaving { opacity: 0; transform: translateX(24px); }
+.swipe-bg {
+  position: absolute; inset: 0; border-radius: var(--radius); display: none;
+  align-items: center; justify-content: space-between; padding: 0 20px;
+  font-weight: 700; font-size: 14px; color: #fff;
+}
+.swipe.to-done .swipe-bg, .swipe.to-later .swipe-bg { display: flex; }
+.swipe.to-done .swipe-bg { background: var(--ok); }
+.swipe.to-later .swipe-bg { background: var(--accent); justify-content: flex-end; }
+.swipe.to-done .sb-later, .swipe.to-later .sb-done { display: none; }
+.swipe:not(.armed) .swipe-bg span { opacity: .6; }
+.task {
+  position: relative;
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--surface); border-radius: var(--radius); padding: 13px 12px 13px 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03); border: 1px solid var(--line);
+  transition: transform .2s ease;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.head-actions { margin-left: auto; display: flex; gap: 6px; }
+.mini-btn {
+  border: 1px solid var(--line); background: var(--surface); color: var(--text-2);
+  border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 600;
+}
+.mini-btn:hover { border-color: var(--accent); color: var(--accent); }
+.quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.quick-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  border: 1px solid var(--line); background: var(--bg); border-radius: 14px; padding: 12px 14px;
+}
+.quick-opt b { font-size: 15px; }
+.quick-opt span { font-size: 13px; color: var(--text-2); }
+.quick-opt:hover { border-color: var(--accent); }
+.brief-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.brief-row .toggle { margin: 8px 0; flex: 1; min-width: 220px; }
+.time-mini {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 7px 10px; font-size: 15px;
+}
+.code-box {
+  display: flex; align-items: center; gap: 8px; background: var(--surface-2); border-radius: 12px;
+  padding: 10px 12px; margin: 8px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px;
+  letter-spacing: .06em; font-weight: 700; word-break: break-all;
+}
+.code-box span { flex: 1; }
+.steps { margin: 6px 0; padding-left: 20px; font-size: 13px; color: var(--text-2); }
+.steps li { margin: 4px 0; }
+.steps code {
+  background: var(--surface-2); border-radius: 6px; padding: 1px 5px; font-size: 12px; word-break: break-all;
+}
+details.set-more summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--accent); margin: 6px 0; }
+.list-hint { text-align: center; font-size: 12px; color: var(--text-3); margin: 14px 0 0; }
 .check {
   flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%;
   border: 2px solid var(--text-3); background: transparent; display: grid; place-items: center; padding: 0;

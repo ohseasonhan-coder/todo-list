@@ -31,13 +31,22 @@ export default {
 /* ---------------- routing ---------------- */
 
 async function route(request, env) {
-  const { pathname } = new URL(request.url);
+  const url = new URL(request.url);
+  const { pathname } = url;
   if (request.method === 'GET' && pathname === '/') return json({ ok: true, service: 'todo-push' });
   if (request.method === 'GET' && pathname === '/vapid') return json({ publicKey: env.VAPID_PUBLIC_KEY });
+  // Siri 단축어는 GET 한 줄로 부르기 쉬움: /inbox?s=<space>&t=<문장>
+  if (request.method === 'GET' && pathname === '/inbox') {
+    return inboxAdd({ space: url.searchParams.get('s'), text: url.searchParams.get('t') }, env, true);
+  }
   if (request.method !== 'POST') throw httpError(404, 'not-found');
 
   const body = await request.json().catch(() => { throw httpError(400, 'bad-json'); });
   switch (pathname) {
+    case '/data/get': return dataGet(body, env);
+    case '/data/put': return dataPut(body, env);
+    case '/inbox': return inboxAdd(body, env, false);
+    case '/inbox/take': return inboxTake(body, env);
     case '/subscribe': return subscribe(body, env);
     case '/sync': return syncReminders(body, env);
     case '/test': return testPush(body, env);
@@ -160,6 +169,81 @@ async function sendDueReminders(env) {
     done.push(env.DB.prepare('DELETE FROM devices WHERE id = ?1').bind(id));
   }
   if (done.length) await env.DB.batch(done);
+}
+
+/* ---------------- 백업·동기화 ---------------- */
+// space id·쓰기 토큰·암호 키는 모두 기기가 "동기화 코드"에서 만들어 냄. 서버는 암호문만 보관
+
+const SPACE_RE = /^[a-f0-9]{32}$/;
+const TOKEN_RE = /^[a-f0-9]{64}$/;
+const MAX_BLOB = 1_500_000;
+const MAX_INBOX = 200;
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function checkSpace(space) {
+  if (typeof space !== 'string' || !SPACE_RE.test(space)) throw httpError(400, 'bad-space');
+}
+async function checkToken(row, token) {
+  if (typeof token !== 'string' || !TOKEN_RE.test(token)) throw httpError(400, 'bad-token');
+  if (row && row.write_hash !== await sha256Hex(token)) throw httpError(403, 'bad-token');
+}
+
+async function dataGet({ space }, env) {
+  checkSpace(space);
+  const row = await env.DB.prepare('SELECT blob, version, updated_at FROM spaces WHERE id = ?1').bind(space).first();
+  if (!row) return json({ version: 0, blob: null, updatedAt: 0 });
+  return json({ version: row.version, blob: row.blob, updatedAt: row.updated_at });
+}
+
+async function dataPut({ space, token, blob, baseVersion }, env) {
+  checkSpace(space);
+  if (typeof blob !== 'string' || !blob || blob.length > MAX_BLOB) throw httpError(400, 'bad-blob');
+  const row = await env.DB.prepare('SELECT write_hash, version FROM spaces WHERE id = ?1').bind(space).first();
+  await checkToken(row, token);
+  const current = row ? row.version : 0;
+  if (Number(baseVersion) !== current) return json({ error: 'conflict', version: current }, 409);
+  const now = Date.now();
+  if (!row) {
+    await env.DB.prepare('INSERT INTO spaces (id, write_hash, blob, version, updated_at) VALUES (?1, ?2, ?3, 1, ?4)')
+      .bind(space, await sha256Hex(token), blob, now).run();
+    return json({ ok: true, version: 1 });
+  }
+  // 버전이 그대로일 때만 덮어씀 (동시에 두 기기가 저장해도 한쪽이 409로 다시 합치게)
+  const res = await env.DB.prepare('UPDATE spaces SET blob = ?1, version = version + 1, updated_at = ?2 WHERE id = ?3 AND version = ?4')
+    .bind(blob, now, space, current).run();
+  if (!res.meta.changes) return json({ error: 'conflict' }, 409);
+  return json({ ok: true, version: current + 1 });
+}
+
+async function inboxAdd({ space, text }, env, plain) {
+  const reply = (msg, status = 200) => (plain
+    ? new Response(msg, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+    : json(status === 200 ? { ok: true } : { error: msg }, status));
+  if (typeof space !== 'string' || !SPACE_RE.test(space)) return reply('동기화 코드가 올바르지 않아요.', 400);
+  const clean = typeof text === 'string' ? text.trim().slice(0, 300) : '';
+  if (!clean) return reply('추가할 내용이 비어 있어요.', 400);
+  if (clean.includes('�')) return reply('글자가 깨져서 들어왔어요. 단축어에서 URL 인코딩 동작을 확인해 주세요.', 400);
+  const row = await env.DB.prepare('SELECT 1 FROM spaces WHERE id = ?1').bind(space).first();
+  if (!row) return reply('먼저 앱에서 자동 백업을 켜 주세요.', 404);
+  const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM inbox WHERE space_id = ?1').bind(space).first();
+  if (n >= MAX_INBOX) return reply('대기 중인 할 일이 너무 많아요. 앱을 한 번 열어 주세요.', 429);
+  await env.DB.prepare('INSERT INTO inbox (space_id, text, created_at) VALUES (?1, ?2, ?3)').bind(space, clean, Date.now()).run();
+  return reply(`✅ 추가했어요: ${clean}`);
+}
+
+async function inboxTake({ space, token }, env) {
+  checkSpace(space);
+  const row = await env.DB.prepare('SELECT write_hash FROM spaces WHERE id = ?1').bind(space).first();
+  if (!row) return json({ items: [] });
+  await checkToken(row, token);
+  const { results } = await env.DB.prepare('SELECT id, text, created_at FROM inbox WHERE space_id = ?1 ORDER BY id LIMIT 100').bind(space).all();
+  if (results.length) {
+    await env.DB.prepare(`DELETE FROM inbox WHERE space_id = ?1 AND id <= ?2`).bind(space, results.at(-1).id).run();
+  }
+  return json({ items: results.map((r) => ({ text: r.text, createdAt: r.created_at })) });
 }
 
 /* ---------------- AI (Gemini) ---------------- */

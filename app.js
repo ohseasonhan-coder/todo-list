@@ -27,14 +27,42 @@ function safeSet(key, value) {
 }
 
 let tasks = safeGet(STORE_KEY, []);
-let settings = { defaultTime: '09:00', ...safeGet(SETTINGS_KEY, {}) };
+let settings = { defaultTime: '09:00', briefOn: true, briefTime: '08:00', ...safeGet(SETTINGS_KEY, {}) };
 let view = safeGet(VIEW_KEY, 'today');
 if (!['today', 'upcoming', 'all', 'done'].includes(view)) view = 'today';
 
 function save() {
+  stampChanges();
   safeSet(STORE_KEY, tasks);
   scheduleReminders();
   queuePushSync();
+  queueDataSync();
+}
+
+/* ---------------- 변경 기록 (동기화용) ---------------- */
+// 할 일마다 updatedAt을 찍고, 지운 할 일은 tombs에 남겨서 기기끼리 합칠 때 씀
+
+const SYNC_KEY = 'todo.sync.v1';
+let syncMeta = { code: null, version: 0, lastSync: 0, tombs: {}, ...safeGet(SYNC_KEY, {}) };
+const taskSig = (x) => JSON.stringify({ ...x, notifiedKey: undefined, updatedAt: undefined });
+let sigMap = new Map(tasks.map((x) => [x.id, taskSig(x)]));
+
+function stampChanges() {
+  const now = Date.now();
+  const seen = new Set();
+  for (const x of tasks) {
+    seen.add(x.id);
+    const s = taskSig(x);
+    if (sigMap.get(x.id) !== s) {
+      x.updatedAt = now;
+      sigMap.set(x.id, s);
+      delete syncMeta.tombs[x.id];
+    }
+  }
+  for (const id of [...sigMap.keys()]) {
+    if (!seen.has(id)) { sigMap.delete(id); syncMeta.tombs[id] = now; }
+  }
+  safeSet(SYNC_KEY, syncMeta);
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -150,8 +178,9 @@ function clearExpiredPauses() {
 /* ---------------- reminders: 시각 계산 ---------------- */
 
 function fireTime(task) {
-  if (task.done || !task.due || task.remind == null) return null;
-  if (task.snoozeUntil) return task.snoozeUntil;
+  if (task.done || !task.due) return null;
+  if (task.snoozeUntil) return task.snoozeUntil; // 미루기·10분 뒤는 알림 설정과 상관없이 울림
+  if (task.remind == null) return null;
   const base = at(task.due, task.time || settings.defaultTime);
   return base - task.remind * 60000;
 }
@@ -331,15 +360,18 @@ function taskHTML(x) {
   if (!x.done && isPaused(x)) meta.push(`<span class="paused">⏸ ${esc(dateLabel(x.pausedUntil, false))}까지 쉬는 중</span>`);
   if (!x.done && x.due && x.remind != null) meta.push(`<span title="알림">🔔 ${x.snoozeUntil ? `${SNOOZE_MIN}분 뒤` : REMIND_LABEL[x.remind] ?? ''}</span>`);
   return `
-    <article class="task${x.done ? ' done' : ''}${x.important ? ' important' : ''}" data-id="${x.id}">
-      <button class="check" aria-label="${x.done ? '완료 취소' : '완료'}">${CHECK_SVG}</button>
-      <div class="task-body">
-        <div class="task-title">${esc(x.title)}</div>
-        ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
-        ${x.note ? `<div class="note-preview">${esc(x.note)}</div>` : ''}
-      </div>
-      <button class="star${x.important ? ' on' : ''}" aria-label="중요 표시" aria-pressed="${!!x.important}">${STAR_SVG(x.important)}</button>
-    </article>`;
+    <div class="swipe" data-id="${x.id}">
+      <div class="swipe-bg" aria-hidden="true"><span class="sb-done">✓ 완료</span><span class="sb-later">${x.repeat && x.repeat !== 'none' ? '다음 회차' : '내일로'} →</span></div>
+      <article class="task${x.done ? ' done' : ''}${x.important ? ' important' : ''}" data-id="${x.id}">
+        <button class="check" aria-label="${x.done ? '완료 취소' : '완료'}">${CHECK_SVG}</button>
+        <div class="task-body">
+          <div class="task-title">${esc(x.title)}</div>
+          ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
+          ${x.note ? `<div class="note-preview">${esc(x.note)}</div>` : ''}
+        </div>
+        <button class="star${x.important ? ' on' : ''}" aria-label="중요 표시" aria-pressed="${!!x.important}">${STAR_SVG(x.important)}</button>
+      </article>
+    </div>`;
 }
 
 const EMPTY = {
@@ -359,9 +391,11 @@ function render() {
   } else {
     list.innerHTML = groups.map((g) => `
       <section class="section">
-        <div class="section-head ${g.cls || ''}">${esc(g.title)} <span class="count">${g.items.length}</span></div>
+        <div class="section-head ${g.cls || ''}">${esc(g.title)} <span class="count">${g.items.length}</span>
+          ${g.cls === 'overdue' ? '<span class="head-actions"><button class="mini-btn" data-bulk="today">모두 오늘로</button><button class="mini-btn" data-bulk="tomorrow">모두 내일로</button></span>' : ''}</div>
         ${g.items.map(taskHTML).join('')}
-      </section>`).join('');
+      </section>`).join('') +
+      (view !== 'done' ? '<p class="list-hint">→ 밀면 완료 · ← 밀면 내일로 · 길게 누르면 미루기</p>' : '');
   }
   renderChrome();
 }
@@ -438,10 +472,10 @@ function toggleDone(id, { animate = true } = {}) {
     save();
     render();
   };
-  const el = animate && list.querySelector(`[data-id="${CSS.escape(id)}"]`);
+  const el = animate && list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
   if (el) {
     if (!x.done) el.classList.add('done');
-    setTimeout(() => el.classList.add('leaving'), 160);
+    setTimeout(() => el.closest('.swipe').classList.add('leaving'), 160);
     setTimeout(apply, 380);
   } else apply();
 }
@@ -454,7 +488,68 @@ function toggleImportant(id) {
   render();
 }
 
+/* ---------------- 미루기 ---------------- */
+
+// 할 일을 date(와 time)로 옮김. 반복 할 일은 규칙에 맞는 그날 이후 첫 회차로 (완료 기록 없이 건너뜀)
+function moveTask(x, date, time) {
+  const routine = x.repeat && x.repeat !== 'none' && x.due;
+  if (routine && time === undefined) {
+    let n = firstOnOrAfter(x, x.due, date);
+    if (n === x.due) n = stepRepeat(n, x.repeat, x.anchorDay);
+    x.due = n;
+  } else {
+    x.due = date;
+  }
+  if (time !== undefined) {
+    x.time = time;
+    if (time && x.remind == null) x.remind = 0;
+  }
+  x.pausedUntil = null;
+  x.pauseFrom = null;
+  x.snoozeUntil = null;
+  settleReminder(x);
+  closeNotification(x.id);
+}
+
+function postpone(id, date, time, label) {
+  const x = findTask(id);
+  if (!x || x.done) return;
+  const before = snapshot();
+  const routineSkip = x.repeat && x.repeat !== 'none' && time === undefined;
+  moveTask(x, date, time);
+  save();
+  render();
+  const when = `${dateLabel(x.due)}${x.time ? ` ${timeLabel(x.time)}` : ''}`;
+  toast(label || (routineSkip ? `이번 회차는 건너뛰어요 · 다음: ${when}` : `미뤘어요 · ${when}`), () => restore(before));
+}
+
+function bulkMoveOverdue(target) {
+  const t = todayStr();
+  const date = target === 'today' ? t : addDays(t, 1);
+  const overdue = tasks.filter((x) => !x.done && x.due && x.due < t);
+  if (!overdue.length) return;
+  const before = snapshot();
+  for (const x of overdue) {
+    if (x.repeat && x.repeat !== 'none') {
+      x.due = firstOnOrAfter(x, x.due, date);
+      x.snoozeUntil = null;
+      settleReminder(x);
+    } else moveTask(x, date);
+  }
+  save();
+  render();
+  toast(`밀린 일 ${overdue.length}개를 ${target === 'today' ? '오늘' : '내일'}로 옮겼어요`, () => restore(before));
+}
+
 function addTask(data) {
+  const task = newTask(data);
+  tasks.push(task);
+  save();
+  render();
+  return task;
+}
+
+function newTask(data) {
   const task = {
     id: uid(),
     title: data.title,
@@ -471,10 +566,9 @@ function addTask(data) {
     notifiedKey: null,
     snoozeUntil: null,
   };
+  if (task.repeat !== 'none' && !task.due) task.due = todayStr();
+  if (task.repeat === 'monthly' && !task.anchorDay && task.due) task.anchorDay = parseYmd(task.due).getDate();
   settleReminder(task);
-  tasks.push(task);
-  save();
-  render();
   return task;
 }
 
@@ -699,7 +793,12 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------------- list interactions ---------------- */
 
+let suppressClick = false;
+
 list.addEventListener('click', (e) => {
+  if (suppressClick) { suppressClick = false; return; }
+  const bulk = e.target.closest('[data-bulk]');
+  if (bulk) { bulkMoveOverdue(bulk.dataset.bulk); return; }
   const row = e.target.closest('.task');
   if (!row) return;
   const id = row.dataset.id;
@@ -707,6 +806,157 @@ list.addEventListener('click', (e) => {
   else if (e.target.closest('.star')) toggleImportant(id);
   else if (e.target.closest('.task-body')) openEditor(findTask(id));
 });
+
+// 밀어서 처리 (오른쪽 → 완료, 왼쪽 → 내일로) + 길게 눌러 빠른 미루기
+const SWIPE_THRESHOLD = 90;
+let gesture = null;
+
+list.addEventListener('pointerdown', (e) => {
+  const sw = e.target.closest('.swipe');
+  if (!sw || view === 'done' || e.button > 0 || e.target.closest('.check, .star')) return;
+  const g = { sw, task: sw.querySelector('.task'), id: sw.dataset.id, x0: e.clientX, y0: e.clientY, dx: 0, mode: null, pid: e.pointerId };
+  g.lp = setTimeout(() => {
+    if (gesture === g && !g.mode) {
+      g.mode = 'longpress';
+      suppressClick = true;
+      navigator.vibrate?.(15);
+      openQuickMenu(g.id);
+    }
+  }, 500);
+  gesture = g;
+});
+
+list.addEventListener('pointermove', (e) => {
+  const g = gesture;
+  if (!g || g.pid !== e.pointerId) return;
+  const dx = e.clientX - g.x0;
+  const dy = e.clientY - g.y0;
+  if (!g.mode) {
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      g.mode = 'swipe';
+      clearTimeout(g.lp);
+      try { g.sw.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
+    } else if (Math.abs(dy) > 10) {
+      g.mode = 'scroll';
+      clearTimeout(g.lp);
+      return;
+    } else return;
+  }
+  if (g.mode !== 'swipe') return;
+  g.dx = dx;
+  g.task.style.transition = 'none';
+  g.task.style.transform = `translateX(${dx}px)`;
+  g.sw.classList.toggle('to-done', dx > 0);
+  g.sw.classList.toggle('to-later', dx < 0);
+  const armed = Math.abs(dx) > SWIPE_THRESHOLD;
+  if (armed && !g.armed) navigator.vibrate?.(8);
+  g.armed = armed;
+  g.sw.classList.toggle('armed', armed);
+});
+
+function endGesture(e) {
+  const g = gesture;
+  if (!g || g.pid !== e.pointerId) return;
+  clearTimeout(g.lp);
+  gesture = null;
+  if (g.mode !== 'swipe') return;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 50);
+  g.task.style.transition = '';
+  if (e.type === 'pointerup' && Math.abs(g.dx) > SWIPE_THRESHOLD) {
+    g.task.style.transform = `translateX(${g.dx > 0 ? '110%' : '-110%'})`;
+    const id = g.id;
+    const right = g.dx > 0;
+    setTimeout(() => {
+      if (right) toggleDone(id, { animate: false });
+      else postpone(id, addDays(todayStr(), 1));
+    }, 180);
+  } else {
+    g.task.style.transform = '';
+    g.sw.classList.remove('to-done', 'to-later', 'armed');
+  }
+}
+list.addEventListener('pointerup', endGesture);
+list.addEventListener('pointercancel', endGesture);
+list.addEventListener('contextmenu', (e) => {
+  const sw = e.target.closest('.swipe');
+  if (!sw || view === 'done') return;
+  e.preventDefault();
+  if (gesture?.mode === 'longpress') return; // 터치 길게 누르기로 이미 열림
+  openQuickMenu(sw.dataset.id);
+});
+
+/* ---------------- 빠른 미루기 메뉴 ---------------- */
+
+const quickBackdrop = $('#quickBackdrop');
+
+function roundUpTime(ms, stepMin = 5) {
+  const d = new Date(ms);
+  d.setSeconds(0, 0);
+  d.setMinutes(Math.ceil(d.getMinutes() / stepMin) * stepMin);
+  return d;
+}
+
+function quickOptions(x) {
+  const routine = x.repeat && x.repeat !== 'none';
+  const now = new Date();
+  const t = todayStr();
+  const opts = [];
+  const later = roundUpTime(Date.now() + 3600e3);
+  opts.push({ label: '1시간 뒤', sub: timeLabel(`${pad(later.getHours())}:${pad(later.getMinutes())}`), at: later });
+  if (now.getHours() < 18 || (now.getHours() === 18 && now.getMinutes() < 30)) {
+    const ev = new Date(); ev.setHours(19, 0, 0, 0);
+    opts.push({ label: '오늘 저녁', sub: '오후 7시', at: ev });
+  }
+  const tomorrow = addDays(t, 1);
+  if (routine) {
+    let next = firstOnOrAfter(x, x.due || t, tomorrow);
+    if (next === x.due) next = stepRepeat(next, x.repeat, x.anchorDay);
+    opts.push({ label: '이번 회차 건너뛰기', sub: `다음: ${dateLabel(next)}`, date: tomorrow });
+  } else {
+    opts.push({ label: '내일 아침', sub: `${dateLabel(tomorrow)} ${timeLabel(settings.defaultTime)}`, date: tomorrow, time: settings.defaultTime });
+  }
+  if (!routine) {
+    const nextMon = addDays(mondayOf(t), 7);
+    opts.push({ label: '다음 주', sub: dateLabel(nextMon), date: nextMon });
+  }
+  return opts;
+}
+
+function openQuickMenu(id) {
+  const x = findTask(id);
+  if (!x || x.done) return;
+  const routine = x.repeat && x.repeat !== 'none';
+  $('#quickTitle').textContent = x.title;
+  const opts = quickOptions(x);
+  $('#quickOptions').innerHTML = opts.map((o, i) => `
+    <button type="button" class="quick-opt" data-i="${i}"><b>${esc(o.label)}</b><span>${esc(o.sub)}</span></button>`).join('');
+  $('#quickOptions').onclick = (e) => {
+    const b = e.target.closest('.quick-opt');
+    if (!b) return;
+    const o = opts[Number(b.dataset.i)];
+    closeSheet(quickBackdrop);
+    if (o.at) {
+      const timeStr = `${pad(o.at.getHours())}:${pad(o.at.getMinutes())}`;
+      if (routine) {
+        // 루틴은 시간 자체를 바꾸지 않고 그때 다시 알려 줌
+        const before = snapshot();
+        x.snoozeUntil = o.at.getTime();
+        x.notifiedKey = null;
+        save();
+        render();
+        toast(`${timeLabel(timeStr)}에 다시 알려드릴게요`, () => restore(before));
+      } else {
+        postpone(id, ymd(o.at), timeStr);
+      }
+    } else {
+      postpone(id, o.date, o.time);
+    }
+  };
+  $('#quickEdit').onclick = () => { closeSheet(quickBackdrop); openEditor(findTask(id)); };
+  $('#quickDelete').onclick = () => { closeSheet(quickBackdrop); deleteTask(id); };
+  openSheet(quickBackdrop);
+}
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => {
   view = b.dataset.view;
@@ -939,11 +1189,56 @@ function upcomingReminders(x) {
   if (x.notifiedKey !== String(first)) {
     list.push({ id: `${x.id}@${x.due}`, fireAt: first, title: x.title, body: reminderBody(x, first, x.due) });
   }
-  if (!x.repeat || x.repeat === 'none') return list;
+  if (!x.repeat || x.repeat === 'none' || x.remind == null) return list;
   const horizon = addDays(todayStr(), ROUTINE_HORIZON_DAYS);
   for (let d = stepRepeat(x.due, x.repeat, x.anchorDay); d <= horizon; d = stepRepeat(d, x.repeat, x.anchorDay)) {
     const f = at(d, x.time || settings.defaultTime) - x.remind * 60000;
     list.push({ id: `${x.id}@${d}`, fireAt: f, title: x.title, body: reminderBody(x, f, d) });
+  }
+  return list;
+}
+
+// 반복 할 일이 from~to 사이에 걸리는 날짜들
+function occurrencesBetween(x, from, to) {
+  if (!x.due) return [];
+  if (!x.repeat || x.repeat === 'none') return x.due >= from && x.due <= to ? [x.due] : [];
+  const out = [];
+  for (let d = firstOnOrAfter(x, x.due, from); d <= to; d = stepRepeat(d, x.repeat, x.anchorDay)) out.push(d);
+  return out;
+}
+
+// 아침 브리핑: 매일 정한 시각에 그날 할 일을 알림 하나로 (할 일이 있는 날만)
+function briefingReminders() {
+  if (!settings.briefOn) return [];
+  const t = todayStr();
+  const horizon = addDays(t, ROUTINE_HORIZON_DAYS);
+  const open = tasks.filter((x) => !x.done && x.due);
+  const byDay = new Map();
+  for (const x of open) {
+    for (const d of occurrencesBetween(x, t, horizon)) {
+      if (!byDay.has(d)) byDay.set(d, []);
+      byDay.get(d).push(x);
+    }
+  }
+  const now = Date.now();
+  const list = [];
+  let first = true;
+  for (let d = t; d <= horizon; d = addDays(d, 1)) {
+    const fireAt = at(d, settings.briefTime || '08:00');
+    if (fireAt <= now) continue;
+    const items = (byDay.get(d) || []).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+    const overdue = first ? open.filter((x) => x.due < d && !(x.repeat && x.repeat !== 'none')).length : 0;
+    first = false;
+    if (!items.length && !overdue) continue;
+    const names = items.slice(0, 4).map((x) => `${x.time ? `${timeLabel(x.time)} ` : ''}${x.title}`);
+    if (items.length > 4) names.push(`외 ${items.length - 4}개`);
+    if (overdue) names.push(`밀린 일 ${overdue}개`);
+    list.push({
+      id: `__brief__@${d}`,
+      fireAt,
+      title: items.length ? `☀️ 오늘 할 일 ${items.length}개` : '☀️ 밀린 할 일이 있어요',
+      body: names.join(' · '),
+    });
   }
   return list;
 }
@@ -969,8 +1264,7 @@ async function syncPushNow() {
   clearTimeout(pushSyncTimer);
   if (!pushActive()) return;
   const now = Date.now();
-  const reminders = tasks
-    .flatMap(upcomingReminders)
+  const reminders = [...tasks.flatMap(upcomingReminders), ...briefingReminders()]
     .filter((r) => r.fireAt > now)
     .sort((a, b) => a.fireAt - b.fireAt)
     .slice(0, 500);
@@ -1145,6 +1439,208 @@ $('#aiApply').addEventListener('click', () => {
   if (picked.some((p) => p.time)) maybeAskPermission();
 });
 
+/* ---------------- 백업·동기화 ---------------- */
+// 동기화 코드 하나로 space id·쓰기 토큰·암호 키를 만들어 냄. 서버에는 암호문만 올라감
+
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const normCode = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const fmtCode = (s) => normCode(s).match(/.{1,4}/g)?.join('-') || '';
+function newSyncCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return fmtCode([...bytes].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join(''));
+}
+async function sha256(text) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+}
+const toHex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const toB64 = (bytes) => btoa(String.fromCharCode(...bytes));
+const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+let syncKeysCache = null;
+async function syncKeys(code = syncMeta.code) {
+  const c = normCode(code);
+  if (syncKeysCache?.c === c) return syncKeysCache;
+  const space = toHex(await sha256(`todo-sync|space|${c}`)).slice(0, 32);
+  const token = toHex(await sha256(`todo-sync|write|${c}`));
+  const key = await crypto.subtle.importKey('raw', await sha256(`todo-sync|key|${c}`), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  syncKeysCache = { c, space, token, key };
+  return syncKeysCache;
+}
+async function encryptJSON(obj, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new TextEncoder().encode(JSON.stringify(obj));
+  const out = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data));
+  // 큰 배열에서도 안전하게 base64로
+  let bin = '';
+  for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode(...out.subarray(i, i + 0x8000));
+  return `${toB64(iv)}.${btoa(bin)}`;
+}
+async function decryptJSON(blob, key) {
+  const [iv, data] = blob.split('.');
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, key, fromB64(data));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+const stamp = (x) => x.updatedAt || x.createdAt || 0;
+function mergeData(remote) {
+  const tombs = { ...(remote.tombs || {}) };
+  for (const [id, t] of Object.entries(syncMeta.tombs)) tombs[id] = Math.max(tombs[id] || 0, t);
+  const byId = new Map();
+  // 같은 시각이면 이 기기 쪽을 우선
+  for (const x of [...tasks, ...(remote.tasks || [])]) {
+    const cur = byId.get(x.id);
+    if (!cur || stamp(x) > stamp(cur)) byId.set(x.id, x);
+  }
+  const merged = [...byId.values()].filter((x) => !(tombs[x.id] >= stamp(x)));
+  const cutoff = Date.now() - 90 * 86400e3;
+  for (const [id, t] of Object.entries(tombs)) if (t < cutoff) delete tombs[id];
+  return { merged, tombs };
+}
+const fingerprint = (list, tombs) => JSON.stringify([
+  list.map((x) => `${x.id}:${stamp(x)}`).sort(),
+  Object.keys(tombs || {}).sort(),
+]);
+
+let dataSyncTimer = null;
+let dataSyncing = null;
+let syncAgain = false;
+let syncError = '';
+function queueDataSync() {
+  if (!API_BASE || !syncMeta.code) return;
+  clearTimeout(dataSyncTimer);
+  dataSyncTimer = setTimeout(() => syncData(), 1500);
+}
+
+async function syncData({ attempt = 0 } = {}) {
+  if (!API_BASE || !syncMeta.code) return false;
+  if (dataSyncing) { syncAgain = true; return dataSyncing; }
+  clearTimeout(dataSyncTimer);
+  dataSyncing = (async () => {
+    try {
+      const k = await syncKeys();
+      const remote = await api('/data/get', { space: k.space });
+      const remoteData = remote.blob ? await decryptJSON(remote.blob, k.key) : { tasks: [], tombs: {} };
+
+      // Siri 등으로 들어온 할 일 (처음엔 space가 없어서 실패할 수 있음)
+      let inbox = [];
+      if (remote.blob) {
+        try { inbox = (await api('/inbox/take', { space: k.space, token: k.token })).items || []; } catch { /* 다음에 다시 */ }
+      }
+
+      // 여기서부터는 await 없이 합쳐서, 그 사이 이 기기에서 고친 내용이 덮이지 않게 함
+      const before = fingerprint(tasks, syncMeta.tombs);
+      const { merged, tombs } = mergeData(remoteData);
+      for (const it of inbox) {
+        const p = parseQuick(it.text);
+        const task = newTask({ ...p, remind: p.time ? 0 : null, due: p.due || todayStr() });
+        task.updatedAt = Date.now();
+        merged.push(task);
+      }
+      const inboxCount = inbox.length;
+
+      tasks = merged;
+      syncMeta.tombs = tombs;
+      sigMap = new Map(tasks.map((x) => [x.id, taskSig(x)]));
+      safeSet(STORE_KEY, tasks);
+
+      if (fingerprint(merged, tombs) !== fingerprint(remoteData.tasks || [], remoteData.tombs)) {
+        const blob = await encryptJSON({ v: 1, tasks: merged, tombs }, k.key);
+        try {
+          const res = await api('/data/put', { space: k.space, token: k.token, blob, baseVersion: remote.version });
+          syncMeta.version = res.version;
+        } catch (err) {
+          if (err.status === 409 && attempt < 3) { dataSyncing = null; return syncData({ attempt: attempt + 1 }); }
+          throw err;
+        }
+      } else {
+        syncMeta.version = remote.version;
+      }
+      syncMeta.lastSync = Date.now();
+      safeSet(SYNC_KEY, syncMeta);
+      syncError = '';
+      if (fingerprint(tasks, syncMeta.tombs) !== before) {
+        render();
+        scheduleReminders();
+        queuePushSync();
+      }
+      if (inboxCount) toast(`🎙 Siri로 추가한 할 일 ${inboxCount}개를 가져왔어요`);
+      return true;
+    } catch (err) {
+      syncError = err.code || err.message || String(err);
+      return false;
+    } finally {
+      dataSyncing = null;
+      if (!settingsBackdrop.hidden) renderSyncSettings();
+      // 동기화 도중 이 기기에서 또 바뀌었으면 한 번 더
+      if (syncAgain) { syncAgain = false; queueDataSync(); }
+    }
+  })();
+  return dataSyncing;
+}
+
+function renderSyncSettings() {
+  const on = !!syncMeta.code;
+  $('#syncSection').hidden = !API_BASE;
+  $('#syncOff').hidden = on;
+  $('#syncOn').hidden = !on;
+  if (!on) return;
+  $('#syncCode').textContent = fmtCode(syncMeta.code);
+  const last = syncMeta.lastSync ? new Date(syncMeta.lastSync) : null;
+  $('#syncStatus').textContent = syncError
+    ? `⚠ 동기화하지 못했어요 (${syncError}). 인터넷 연결을 확인해 주세요.`
+    : last ? `✅ 마지막 백업: ${dateLabel(ymd(last))} ${timeLabel(`${pad(last.getHours())}:${pad(last.getMinutes())}`)}` : '백업 중…';
+  syncKeys().then((k) => { $('#siriUrl').textContent = `${API_BASE}/inbox?s=${k.space}&t=`; }).catch(() => {});
+}
+
+$('#syncStartBtn').addEventListener('click', async () => {
+  syncMeta.code = newSyncCode();
+  syncMeta.version = 0;
+  safeSet(SYNC_KEY, syncMeta);
+  renderSyncSettings();
+  const ok = await syncData();
+  toast(ok ? '☁️ 자동 백업을 켰어요. 코드를 꼭 메모해 두세요' : '백업 서버에 연결하지 못했어요');
+});
+$('#syncJoinBtn').addEventListener('click', async () => {
+  const code = normCode($('#syncJoinInput').value);
+  if (code.length !== 16) { toast('코드 16자리를 확인해 주세요'); return; }
+  const prev = { ...syncMeta };
+  syncMeta.code = fmtCode(code);
+  syncMeta.version = 0;
+  const k = await syncKeys();
+  try {
+    const remote = await api('/data/get', { space: k.space });
+    if (!remote.blob) { Object.assign(syncMeta, prev); toast('이 코드로 저장된 백업이 없어요'); return; }
+  } catch {
+    Object.assign(syncMeta, prev);
+    toast('서버에 연결하지 못했어요');
+    return;
+  }
+  safeSet(SYNC_KEY, syncMeta);
+  $('#syncJoinInput').value = '';
+  const ok = await syncData();
+  renderSyncSettings();
+  toast(ok ? '🔗 연결했어요. 두 기기의 할 일을 합쳤어요' : '연결에 실패했어요');
+});
+$('#syncNowBtn').addEventListener('click', async () => {
+  const ok = await syncData();
+  toast(ok ? '지금 백업했어요' : '백업에 실패했어요');
+});
+$('#syncCopyBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(fmtCode(syncMeta.code)); toast('코드를 복사했어요'); } catch { toast('복사하지 못했어요. 직접 적어 두세요'); }
+});
+$('#siriCopyBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#siriUrl').textContent); toast('주소를 복사했어요'); } catch { toast('복사하지 못했어요'); }
+});
+$('#syncStopBtn').addEventListener('click', () => {
+  if (!confirm('이 기기에서 동기화를 끌까요? 할 일은 이 기기에 그대로 남고, 서버 백업도 지워지지 않아요.')) return;
+  syncMeta.code = null;
+  syncMeta.version = 0;
+  safeSet(SYNC_KEY, syncMeta);
+  syncKeysCache = null;
+  renderSyncSettings();
+  toast('동기화를 껐어요');
+});
+
 /* ---------------- settings ---------------- */
 
 const settingsBackdrop = $('#settingsBackdrop');
@@ -1174,6 +1670,11 @@ function renderSettings() {
   if ('Notification' in window && Notification.permission === 'granted' && API_BASE && !pushActive()) enable.hidden = false;
   $('#lockTestBtn').hidden = !pushActive();
   $('#defaultTime').value = settings.defaultTime;
+  $('#briefOn').checked = !!settings.briefOn;
+  $('#briefTime').value = settings.briefTime || '08:00';
+  $('#briefTime').disabled = !settings.briefOn;
+  $('.brief-row').hidden = !API_BASE;
+  renderSyncSettings();
 
   const pausedRoutines = tasks.filter((x) => !x.done && isPaused(x));
   const routines = tasks.filter(isRoutine);
@@ -1214,6 +1715,18 @@ $('#defaultTime').addEventListener('change', (e) => {
   tasks.filter((x) => !x.time).forEach(settleReminder);
   save();
   render();
+});
+$('#briefOn').addEventListener('change', (e) => {
+  settings.briefOn = e.target.checked;
+  safeSet(SETTINGS_KEY, settings);
+  $('#briefTime').disabled = !settings.briefOn;
+  syncPushNow();
+  toast(settings.briefOn ? `매일 ${timeLabel(settings.briefTime)}에 오늘 할 일을 알려드려요` : '아침 브리핑을 껐어요');
+});
+$('#briefTime').addEventListener('change', (e) => {
+  settings.briefTime = e.target.value || '08:00';
+  safeSet(SETTINGS_KEY, settings);
+  syncPushNow();
 });
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -1277,15 +1790,18 @@ function tick() {
     syncPushNow(); // 루틴 알림 범위를 하루 앞으로 늘림
   }
   scheduleReminders();
+  // 화면을 보고 있는 동안 1분마다 다른 기기 변경 사항을 가져옴
+  if (syncMeta.code && document.visibilityState === 'visible' && Date.now() - syncMeta.lastSync > 60000) syncData();
 }
 setInterval(tick, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { render(); tick(); syncPushNow(); }
+  if (document.visibilityState === 'visible') { render(); tick(); syncPushNow(); syncData(); }
 });
 
 if (clearExpiredPauses()) safeSet(STORE_KEY, tasks);
 render();
 scheduleReminders();
+syncData();
 // 앱을 열 때마다 구독을 다시 확인 (iOS는 구독이 바뀌거나 만료될 수 있음)
 if (API_BASE && 'Notification' in window && Notification.permission === 'granted') enablePush({ quiet: true });
 

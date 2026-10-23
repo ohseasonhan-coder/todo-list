@@ -1,5 +1,5 @@
 // to do list 서비스워커 — 오프라인 캐시 + 알림 버튼 처리
-const CACHE = 'todo-v3';
+const CACHE = 'todo-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -61,8 +61,9 @@ self.addEventListener('push', (e) => {
     requireInteraction: true,
     icon: 'icons/icon-192.png',
     badge: 'icons/icon-192.png',
-    data: { id: id && id !== '__test__' ? id : null },
-    actions: id && id !== '__test__' ? [{ action: 'done', title: '완료' }, { action: 'snooze', title: '10분 뒤' }] : [],
+    // __test__, __brief__ 같은 시스템 알림은 완료/미루기 버튼 없음
+    data: { id: id && !id.startsWith('__') ? id : null },
+    actions: id && !id.startsWith('__') ? [{ action: 'done', title: '완료' }, { action: 'snooze', title: '10분 뒤' }] : [],
   }));
 });
 
