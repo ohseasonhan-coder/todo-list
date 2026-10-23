@@ -341,25 +341,41 @@ async function aiAssist({ deviceId, passcode, mode, text, today, now, context },
   if (usage.count > AI_DAILY_LIMIT) throw httpError(429, 'ai-daily-limit');
 
   const prompt = buildPrompt(mode, text.trim(), String(today || day), String(now || ''), Array.isArray(context) ? context.slice(0, 60) : []);
-  const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, responseMimeType: 'application/json', responseSchema: TASK_SCHEMA },
-    }),
-  });
-  if (!res.ok) {
-    console.log('gemini error', res.status, (await res.text()).slice(0, 300));
-    throw httpError(502, 'ai-upstream-error');
-  }
-  const data = await res.json();
+  const data = await callGemini(prompt, env);
   const raw = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
   let parsed;
-  try { parsed = JSON.parse(raw); } catch { throw httpError(502, 'ai-bad-output'); }
+  try { parsed = JSON.parse(raw); } catch {
+    console.log('gemini bad output', data?.candidates?.[0]?.finishReason, raw.slice(0, 200));
+    throw httpError(502, `ai-bad-output-${data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || 'EMPTY'}`);
+  }
   const tasks = (parsed.tasks || []).slice(0, 30).map(cleanTask).filter(Boolean);
   return json({ message: String(parsed.message || '').slice(0, 500), tasks });
+}
+
+// 설정한 모델이 없어졌으면(404) 최신 별칭 모델로 자동 전환. 실패하면 원인 코드를 그대로 돌려줌
+async function callGemini(prompt, env) {
+  const models = [...new Set([env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash'].filter(Boolean))];
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4, responseMimeType: 'application/json', responseSchema: TASK_SCHEMA },
+  });
+  let last = null;
+  for (const model of models) {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body,
+    });
+    if (res.ok) return res.json();
+    const text = await res.text();
+    let err = {};
+    try { err = JSON.parse(text).error || {}; } catch { /* JSON 아님 */ }
+    const reason = err.details?.find((d) => d.reason)?.reason || err.status || 'UNKNOWN';
+    console.log('gemini error', model, res.status, reason, String(err.message || text).slice(0, 200));
+    last = { status: res.status, reason };
+    if (res.status !== 404) break; // 키·한도 문제는 다른 모델로 바꿔도 같음
+  }
+  throw httpError(502, `ai-upstream-${last.status}-${last.reason}`);
 }
 
 function cleanTask(t) {

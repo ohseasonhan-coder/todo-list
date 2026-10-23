@@ -1736,6 +1736,16 @@ const AI_ERRORS = {
   'ai-not-configured': '서버에 Gemini API 키가 아직 없어요.',
   'ai-daily-limit': '오늘 AI 사용 한도를 넘었어요. 내일 다시 써 주세요.',
 };
+// 서버가 돌려준 Gemini 원인 코드(ai-upstream-상태-이유)를 알아듣기 쉬운 말로
+function aiErrorMessage(code = '') {
+  if (AI_ERRORS[code]) return AI_ERRORS[code];
+  if (/API_KEY_INVALID|API_KEY/.test(code)) return 'Gemini API 키가 올바르지 않아요. 키를 다시 넣어야 해요.';
+  if (/-403-|PERMISSION_DENIED|SERVICE_DISABLED/.test(code)) return 'Gemini 키에 사용 권한이 없어요. Google AI Studio에서 키를 확인해 주세요.';
+  if (/-429-|RESOURCE_EXHAUSTED/.test(code)) return 'Gemini 무료 사용량을 잠시 넘었어요. 조금 뒤 다시 시도해 주세요.';
+  if (/-404-/.test(code)) return 'Gemini 모델을 찾지 못했어요.';
+  if (/ai-bad-output-(SAFETY|BLOCK)/.test(code)) return 'AI가 이 요청에는 답하지 않았어요. 다르게 적어 보세요.';
+  return `AI 응답을 받지 못했어요 (${code || '연결 오류'}).`;
+}
 
 function setAiMode(mode) {
   aiMode = mode;
@@ -1786,7 +1796,7 @@ async function runAI() {
     aiTasks = data.tasks || [];
     renderAIResult(data.message);
   } catch (err) {
-    toast(AI_ERRORS[err.code] || 'AI 응답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.');
+    toast(aiErrorMessage(err.code));
   } finally {
     btn.disabled = false;
     btn.textContent = 'AI에게 부탁하기';
