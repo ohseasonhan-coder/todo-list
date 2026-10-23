@@ -231,6 +231,39 @@
           </details>
         </div>
       </section>
+      <section class="set-group" id="feedSection">
+        <h3>📅 아이폰 캘린더 · 위젯에 보이기</h3>
+        <div id="feedOff">
+          <p class="hint">할 일이 아이폰 <b>캘린더 앱</b>과 홈 화면·잠금화면의 <b>캘린더 위젯</b>에 일정처럼 보여요. 완료는 이 앱에서 해요.</p>
+          <p class="hint">⚠ 캘린더가 읽을 수 있도록, 켜면 할 일 제목·메모가 <b>암호화되지 않은 채</b> 서버에 올라가요. 구독 주소를 아는 사람만 볼 수 있어요.</p>
+          <div class="set-actions"><button class="chip-btn primary" id="feedStartBtn">캘린더 구독 켜기</button></div>
+        </div>
+        <div id="feedOn" hidden>
+          <div class="set-actions">
+            <a class="chip-btn primary" id="feedSubscribe" href="#">아이폰 캘린더에 추가</a>
+            <button class="chip-btn" id="feedCopyBtn">주소 복사</button>
+          </div>
+          <p class="set-status" id="feedStatus"></p>
+          <details class="set-more">
+            <summary>버튼이 안 되면 (직접 추가하기)</summary>
+            <ol class="steps">
+              <li>위의 <b>주소 복사</b>를 눌러요</li>
+              <li>아이폰 <b>설정 → 앱 → 캘린더 → 캘린더 계정 → 계정 추가 → 기타 → 구독 캘린더 추가</b></li>
+              <li>복사한 주소를 붙여넣고 <b>다음 → 저장</b></li>
+            </ol>
+          </details>
+          <details class="set-more">
+            <summary>홈 화면 · 잠금화면에 위젯 놓기</summary>
+            <ol class="steps">
+              <li>홈 화면 빈 곳을 길게 누르기 → 왼쪽 위 <b>편집 → 위젯 추가</b></li>
+              <li><b>캘린더</b> → <b>다음 일정</b> 또는 <b>목록</b> 위젯 선택 → 추가</li>
+              <li>잠금화면: 잠금화면을 길게 누르기 → <b>사용자화</b> → 잠금화면 → 위젯 칸 → <b>캘린더</b></li>
+            </ol>
+            <p class="hint">아이폰이 구독 캘린더를 주기적으로 새로 가져와서, 앱에서 바꾼 내용이 캘린더에 보이기까지 시간이 조금 걸릴 수 있어요.</p>
+          </details>
+          <div class="set-actions"><button class="chip-btn danger" id="feedStopBtn">캘린더 구독 끄기</button></div>
+        </div>
+      </section>
       <section class="set-group">
         <h3>데이터</h3>
         <div class="set-actions">

@@ -37,6 +37,7 @@ function save() {
   scheduleReminders();
   queuePushSync();
   queueDataSync();
+  queueFeedPublish();
 }
 
 /* ---------------- 변경 기록 (동기화용) ---------------- */
@@ -1562,6 +1563,7 @@ async function syncData({ attempt = 0 } = {}) {
         render();
         scheduleReminders();
         queuePushSync();
+        queueFeedPublish();
       }
       if (inboxCount) toast(`🎙 Siri로 추가한 할 일 ${inboxCount}개를 가져왔어요`);
       return true;
@@ -1641,6 +1643,104 @@ $('#syncStopBtn').addEventListener('click', () => {
   toast('동기화를 껐어요');
 });
 
+/* ---------------- 캘린더 구독 피드 ---------------- */
+// 켜 두면 할 일을 서버의 .ics 피드로 올림 → 아이폰 캘린더·위젯에 표시 (이 부분만 평문)
+
+const FEED_PAST_DAYS = 7;
+const FEED_FUTURE_DAYS = 60;
+let feedTimer = null;
+let feedError = '';
+
+const randomHex = (n) => toHex(crypto.getRandomValues(new Uint8Array(n)));
+const feedUrl = (scheme = 'https') => `${API_BASE.replace(/^https:/, `${scheme}:`)}/cal/${settings.calFeed.id}.ics`;
+
+function feedEvent(x, date, prefix = '', allDay = false) {
+  const title = `${prefix}${x.important ? '⭐ ' : ''}${x.title}`;
+  const base = { uid: `${x.id}@${date}`, title, note: x.note || '' };
+  return x.time && !allDay
+    ? { ...base, allDay: false, start: at(date, x.time), minutes: 30 }
+    : { ...base, allDay: true, date };
+}
+
+function buildFeedEvents() {
+  const t = todayStr();
+  const from = addDays(t, -FEED_PAST_DAYS);
+  const to = addDays(t, FEED_FUTURE_DAYS);
+  const events = [];
+  for (const x of tasks) {
+    if (!x.due) continue;
+    if (x.done) {
+      // 최근 완료한 일은 완료한 날에 ✓ 표시로 남겨 둠 (오늘 얼마나 했는지 위젯에서 보이게)
+      const d = x.doneAt ? ymd(new Date(x.doneAt)) : x.due;
+      if (d >= from && d <= t) events.push(feedEvent(x, d, '✓ ', d !== x.due));
+      continue;
+    }
+    const routine = x.repeat && x.repeat !== 'none';
+    if (!routine && x.due < t) {
+      events.push(feedEvent(x, t, '⚠ ', true)); // 밀린 일은 오늘 칸에
+      continue;
+    }
+    for (const d of occurrencesBetween(x, t, to)) events.push(feedEvent(x, d));
+  }
+  return events.slice(0, 1000);
+}
+
+function queueFeedPublish() {
+  if (!API_BASE || !settings.calFeed) return;
+  clearTimeout(feedTimer);
+  feedTimer = setTimeout(publishFeed, 3000);
+}
+
+async function publishFeed() {
+  clearTimeout(feedTimer);
+  if (!API_BASE || !settings.calFeed) return false;
+  try {
+    await api('/feed/put', { feed: settings.calFeed.id, token: settings.calFeed.token, events: buildFeedEvents() });
+    settings.calFeed.last = Date.now();
+    safeSet(SETTINGS_KEY, settings);
+    feedError = '';
+    return true;
+  } catch (err) {
+    feedError = err.code || err.message || String(err);
+    return false;
+  } finally {
+    if (!settingsBackdrop.hidden) renderFeedSettings();
+  }
+}
+
+function renderFeedSettings() {
+  const on = !!settings.calFeed;
+  $('#feedSection').hidden = !API_BASE;
+  $('#feedOff').hidden = on;
+  $('#feedOn').hidden = !on;
+  if (!on) return;
+  $('#feedSubscribe').href = feedUrl('webcal');
+  const last = settings.calFeed.last ? new Date(settings.calFeed.last) : null;
+  $('#feedStatus').textContent = feedError
+    ? `⚠ 캘린더에 올리지 못했어요 (${feedError}). 인터넷 연결을 확인해 주세요.`
+    : last ? `✅ 캘린더에 올림: ${dateLabel(ymd(last))} ${timeLabel(`${pad(last.getHours())}:${pad(last.getMinutes())}`)}` : '올리는 중…';
+}
+
+$('#feedStartBtn').addEventListener('click', async () => {
+  settings.calFeed = { id: randomHex(16), token: randomHex(32), last: 0 };
+  safeSet(SETTINGS_KEY, settings);
+  renderFeedSettings();
+  const ok = await publishFeed();
+  toast(ok ? '📅 준비됐어요. “아이폰 캘린더에 추가”를 눌러 주세요' : '서버에 연결하지 못했어요');
+});
+$('#feedCopyBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(feedUrl('https')); toast('구독 주소를 복사했어요'); } catch { toast('복사하지 못했어요'); }
+});
+$('#feedStopBtn').addEventListener('click', async () => {
+  if (!confirm('캘린더 구독을 끌까요? 서버에 올린 할 일 목록도 지워져요. 아이폰 캘린더에서는 구독 캘린더를 따로 삭제해 주세요.')) return;
+  const feed = settings.calFeed;
+  try { await api('/feed/delete', { feed: feed.id, token: feed.token }); } catch { /* 이미 없으면 무시 */ }
+  settings.calFeed = null;
+  safeSet(SETTINGS_KEY, settings);
+  renderFeedSettings();
+  toast('캘린더 구독을 껐어요');
+});
+
 /* ---------------- settings ---------------- */
 
 const settingsBackdrop = $('#settingsBackdrop');
@@ -1675,6 +1775,7 @@ function renderSettings() {
   $('#briefTime').disabled = !settings.briefOn;
   $('.brief-row').hidden = !API_BASE;
   renderSyncSettings();
+  renderFeedSettings();
 
   const pausedRoutines = tasks.filter((x) => !x.done && isPaused(x));
   const routines = tasks.filter(isRoutine);
@@ -1788,6 +1889,7 @@ function tick() {
     if (clearExpiredPauses()) safeSet(STORE_KEY, tasks);
     render();
     syncPushNow(); // 루틴 알림 범위를 하루 앞으로 늘림
+    queueFeedPublish(); // 밀린 일을 새 "오늘" 칸으로
   }
   scheduleReminders();
   // 화면을 보고 있는 동안 1분마다 다른 기기 변경 사항을 가져옴

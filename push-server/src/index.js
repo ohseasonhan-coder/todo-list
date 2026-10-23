@@ -3,6 +3,7 @@
 // - AI: Gemini로 문장을 할 일 목록으로 바꾸거나 큰 일을 잘게 쪼갬 (접근 코드 필요)
 
 import { sendPush } from './webpush.js';
+import { buildCalendar } from './ics.js';
 
 const MAX_REMINDERS = 500;
 const AI_DAILY_LIMIT = 100;
@@ -39,10 +40,15 @@ async function route(request, env) {
   if (request.method === 'GET' && pathname === '/inbox') {
     return inboxAdd({ space: url.searchParams.get('s'), text: url.searchParams.get('t') }, env, true);
   }
+  // 아이폰 캘린더 구독: webcal://.../cal/<feed>.ics
+  const cal = request.method === 'GET' && pathname.match(/^\/cal\/([a-f0-9]{32})\.ics$/);
+  if (cal) return calendarFeed(cal[1], env);
   if (request.method !== 'POST') throw httpError(404, 'not-found');
 
   const body = await request.json().catch(() => { throw httpError(400, 'bad-json'); });
   switch (pathname) {
+    case '/feed/put': return feedPut(body, env);
+    case '/feed/delete': return feedDelete(body, env);
     case '/data/get': return dataGet(body, env);
     case '/data/put': return dataPut(body, env);
     case '/inbox': return inboxAdd(body, env, false);
@@ -244,6 +250,55 @@ async function inboxTake({ space, token }, env) {
     await env.DB.prepare(`DELETE FROM inbox WHERE space_id = ?1 AND id <= ?2`).bind(space, results.at(-1).id).run();
   }
   return json({ items: results.map((r) => ({ text: r.text, createdAt: r.created_at })) });
+}
+
+/* ---------------- 캘린더 구독 피드 ---------------- */
+
+const MAX_EVENTS = 1000;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function feedPut({ feed, token, events }, env) {
+  checkSpace(feed);
+  if (!Array.isArray(events)) throw httpError(400, 'bad-events');
+  const row = await env.DB.prepare('SELECT write_hash FROM feeds WHERE id = ?1').bind(feed).first();
+  await checkToken(row, token);
+  const clean = events.slice(0, MAX_EVENTS).map((e) => {
+    if (!e || typeof e.uid !== 'string' || typeof e.title !== 'string') return null;
+    const base = { uid: e.uid.slice(0, 120), title: e.title.slice(0, 200), note: typeof e.note === 'string' ? e.note.slice(0, 500) : '' };
+    if (e.allDay && DATE_RE.test(e.date || '')) return { ...base, allDay: true, date: e.date };
+    if (!e.allDay && Number.isFinite(e.start)) return { ...base, allDay: false, start: Math.floor(e.start), minutes: Math.min(Math.max(Number(e.minutes) || 30, 5), 600) };
+    return null;
+  }).filter(Boolean);
+  const data = JSON.stringify(clean);
+  const now = Date.now();
+  if (row) {
+    await env.DB.prepare('UPDATE feeds SET events = ?1, updated_at = ?2 WHERE id = ?3').bind(data, now, feed).run();
+  } else {
+    await env.DB.prepare('INSERT INTO feeds (id, write_hash, events, updated_at) VALUES (?1, ?2, ?3, ?4)')
+      .bind(feed, await sha256Hex(token), data, now).run();
+  }
+  return json({ ok: true, count: clean.length });
+}
+
+async function feedDelete({ feed, token }, env) {
+  checkSpace(feed);
+  const row = await env.DB.prepare('SELECT write_hash FROM feeds WHERE id = ?1').bind(feed).first();
+  if (!row) return json({ ok: true });
+  await checkToken(row, token);
+  await env.DB.prepare('DELETE FROM feeds WHERE id = ?1').bind(feed).run();
+  return json({ ok: true });
+}
+
+async function calendarFeed(feed, env) {
+  const row = await env.DB.prepare('SELECT events, updated_at FROM feeds WHERE id = ?1').bind(feed).first();
+  if (!row) return new Response('Not found', { status: 404 });
+  return new Response(buildCalendar(JSON.parse(row.events), row.updated_at), {
+    headers: {
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'Cache-Control': 'no-cache, max-age=0',
+      'Content-Disposition': 'inline; filename="todo.ics"',
+    },
+  });
 }
 
 /* ---------------- AI (Gemini) ---------------- */

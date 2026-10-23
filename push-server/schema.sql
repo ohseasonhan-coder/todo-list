@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS inbox (
 );
 CREATE INDEX IF NOT EXISTS inbox_space ON inbox (space_id);
 
+-- 캘린더 구독 피드 (사용자가 켰을 때만, 할 일 제목이 평문으로 저장됨)
+CREATE TABLE IF NOT EXISTS feeds (
+  id TEXT PRIMARY KEY,
+  write_hash TEXT NOT NULL,
+  events TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ai_usage (
   device_id TEXT NOT NULL,
   day TEXT NOT NULL,

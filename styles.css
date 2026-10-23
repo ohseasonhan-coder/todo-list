@@ -252,6 +252,7 @@ details.set-more summary { cursor: pointer; font-size: 14px; font-weight: 600; c
   font-size: 14px; font-weight: 600; color: var(--text-2); white-space: nowrap; display: inline-block;
 }
 .chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+a.chip-btn { text-decoration: none; }
 .chip-btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .chip-btn.danger { color: var(--danger); }
 .file-btn { cursor: pointer; }
