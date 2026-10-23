@@ -1,0 +1,22 @@
+name = "todo-push"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# 매분 알림 시각이 된 할 일을 푸시
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+APP_URL = "https://ohseasonhan-coder.github.io/todo-list/"
+ALLOWED_ORIGINS = "https://ohseasonhan-coder.github.io,http://localhost:4400"
+VAPID_SUBJECT = "https://ohseasonhan-coder.github.io/todo-list/"
+VAPID_PUBLIC_KEY = "BLfN0iHBsTJOM6eZBajWI0tWw5QZiMCfnSGIjO5jUpFooH-SrtP2eh6YewJZyGfut0rC0CkEwKLkWhz9O7bQjJo"
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# 비밀값은 wrangler secret put 으로 넣음: VAPID_PRIVATE_JWK, GEMINI_API_KEY, AI_PASSCODE
+
+[[d1_databases]]
+binding = "DB"
+database_name = "todo-push"
+database_id = "586613ce-9338-4795-997e-417d3376867d"

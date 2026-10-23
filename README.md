@@ -19,6 +19,21 @@
 - 브라우저 앱이 알림 시각을 직접 계산하므로, 휴대폰이 앱을 완전히 종료한 상태에서는 알림이 늦거나 오지 않을 수 있습니다.
   꼭 받아야 하는 일은 편집 화면의 **📅 캘린더에 추가**로 휴대폰 캘린더에 알림까지 함께 넣으세요.
 
+## 루틴 일시정지
+- 반복 할 일 편집 화면 → "다시 시작할 날짜" → 일시정지. 그날까지 목록·알림에서 빠졌다가 그날부터 다시 나타남
+- 설정 → 루틴 일시정지 → 모든 반복 할 일을 한 번에 멈춤 (여행 등)
+
+## AI 비서 (Gemini)
+- 입력창의 ✨ 버튼: 할 일 만들기 / 오늘 계획 / 잘게 쪼개기. 제안 중 고른 것만 추가
+- 처음 한 번 설정 → "AI 접근 코드"에 서버에 넣은 코드를 입력
+
+## 서버 (push-server/)
+Cloudflare Worker `todo-push` (https://todo-push.ohseasonhan.workers.dev) + D1 DB.
+매분 cron으로 알림 시각이 된 할 일을 Web Push로 보냄 → 아이폰 잠금화면에도 표시됨.
+- 배포: `cd push-server && npx wrangler deploy`
+- 비밀값: `npx wrangler secret put VAPID_PRIVATE_JWK | GEMINI_API_KEY | AI_PASSCODE`
+- 테스트: `npm test` (암호화·VAPID 서명 검증)
+
 ## 실행 / 배포
 - PC에서 바로 보기: `python -m http.server 4400` 실행 후 http://localhost:4400
 - 휴대폰에서 쓰려면 HTTPS 주소가 필요합니다. 이 폴더를 그대로 GitHub Pages, Netlify, Cloudflare Pages 등에 올리면 됩니다.

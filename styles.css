@@ -223,6 +223,36 @@ h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
 .set-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .set-status { margin: 0; font-size: 14px; color: var(--text-2); }
 
+/* ---------- pause ---------- */
+.pause-box { background: var(--surface-2); border-radius: 14px; padding: 10px 12px; margin: 10px 0; }
+.pause-head { font-weight: 700; font-size: 14px; }
+.pause-head small { font-weight: 500; color: var(--text-3); margin-left: 4px; }
+.pause-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.pause-row .field { margin: 6px 0; min-width: 150px; }
+.pause-row .chip-btn { margin-bottom: 10px; }
+.meta .paused { color: var(--text-3); font-weight: 600; }
+
+/* ---------- AI ---------- */
+.ai-btn { font-size: 18px; }
+.seg { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 12px; margin: 6px 0 4px; }
+.seg button {
+  flex: 1; border: 0; background: transparent; border-radius: 9px; padding: 8px 4px;
+  font-size: 14px; font-weight: 600; color: var(--text-2); white-space: nowrap;
+}
+.seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.primary-btn.wide { width: 100%; margin: 4px 0 0; }
+.primary-btn:disabled { opacity: .55; cursor: progress; }
+.ai-result { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.ai-message { margin: 0 0 10px; font-size: 14px; color: var(--text-2); white-space: pre-wrap; }
+.ai-item {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 12px; margin-bottom: 6px; cursor: pointer;
+}
+.ai-item input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+.ai-item .t { font-weight: 600; }
+.ai-item .m { font-size: 13px; color: var(--text-2); }
+.ai-item .tag { font-size: 11px; font-weight: 700; color: var(--accent); margin-left: 6px; }
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 30;

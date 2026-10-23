@@ -52,6 +52,7 @@
       <div class="composer-row">
         <input id="quickInput" type="text" enterkeyhint="done"
                placeholder="할 일 입력 · 예) 내일 오후 3시 치과" aria-label="할 일 입력" />
+        <button type="button" class="icon-btn subtle ai-btn" id="aiBtn" aria-label="AI 비서">✨</button>
         <button type="button" class="icon-btn subtle" id="detailBtn" aria-label="자세히 추가">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
         </button>
@@ -120,13 +121,23 @@
         </label>
       </div>
       <p class="hint" id="remindHint"></p>
+      <div class="pause-box" id="pauseBox" hidden>
+        <div class="pause-head">⏸ 루틴 일시정지 <small>여행 등으로 못 지킬 때</small></div>
+        <p class="hint" id="pauseStatus"></p>
+        <div class="pause-row">
+          <label class="field"><span>다시 시작할 날짜</span><input type="date" id="pauseUntil" /></label>
+          <button type="button" class="chip-btn" id="pauseBtn">일시정지</button>
+          <button type="button" class="chip-btn primary" id="resumeBtn" hidden>지금 다시 시작</button>
+        </div>
+      </div>
       <label class="toggle">
         <input type="checkbox" name="important" />
         <span>⭐ 중요 표시</span>
       </label>
       <div class="sheet-actions">
         <button type="button" class="ghost danger" id="deleteBtn">삭제</button>
-        <button type="button" class="ghost" id="icsBtn" title="휴대폰 캘린더 앱에 알림과 함께 추가">📅 캘린더에 추가</button>
+        <button type="button" class="ghost" id="icsBtn" title="휴대폰 캘린더 앱에 알림과 함께 추가">📅 캘린더</button>
+        <button type="button" class="ghost" id="breakdownBtn" title="AI로 작은 단계로 나누기">✨ 쪼개기</button>
         <button type="submit" class="primary-btn">저장</button>
       </div>
     </form>
@@ -151,7 +162,28 @@
           <span>날짜만 있고 시간이 없는 할 일의 알림 시각</span>
           <input type="time" id="defaultTime" />
         </label>
-        <p class="hint">휴대폰에서는 앱을 <b>홈 화면에 설치</b>해야 알림이 옵니다. 앱을 완전히 닫아 둔 상태에서도 확실히 받고 싶은 할 일은 편집 화면의 <b>📅 캘린더에 추가</b>를 눌러 주세요.</p>
+        <p class="set-status" id="pushStatus"></p>
+        <div class="set-actions">
+          <button class="chip-btn" id="lockTestBtn" hidden>잠금화면 테스트 (1분 뒤)</button>
+        </div>
+        <p class="hint">휴대폰에서는 앱을 <b>홈 화면에 설치</b>한 뒤 알림을 켜야 해요. 서버 알림이 연결되면 앱을 닫거나 화면을 잠가도 알림이 와요.</p>
+      </section>
+      <section class="set-group">
+        <h3>루틴 일시정지</h3>
+        <p class="hint" id="pauseAllStatus">여행처럼 루틴을 못 지키는 기간에는 모든 반복 할 일을 한 번에 멈출 수 있어요.</p>
+        <div class="pause-row">
+          <label class="field"><span>다시 시작할 날짜</span><input type="date" id="pauseAllUntil" /></label>
+          <button class="chip-btn" id="pauseAllBtn">모두 일시정지</button>
+          <button class="chip-btn primary" id="resumeAllBtn" hidden>모두 다시 시작</button>
+        </div>
+      </section>
+      <section class="set-group">
+        <h3>AI 비서</h3>
+        <label class="field">
+          <span>AI 접근 코드</span>
+          <input type="password" id="aiPasscode" autocomplete="off" placeholder="서버에 설정한 접근 코드" />
+        </label>
+        <p class="hint">입력창의 ✨ 버튼으로 말하듯 할 일을 만들거나, 오늘 계획을 짜거나, 큰 일을 쪼갤 수 있어요.</p>
       </section>
       <section class="set-group">
         <h3>앱 설치</h3>
@@ -168,6 +200,35 @@
         <p class="hint">할 일은 이 기기의 브라우저에만 저장됩니다.</p>
       </section>
     </div>
+  </div>
+
+  <!-- AI 시트 -->
+  <div class="sheet-backdrop" id="aiBackdrop" hidden>
+    <form class="sheet" id="aiForm" autocomplete="off">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2>✨ AI 비서</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">✕</button>
+      </div>
+      <div class="seg" role="radiogroup" id="aiModes">
+        <button type="button" data-mode="plan" aria-checked="true">할 일 만들기</button>
+        <button type="button" data-mode="today" aria-checked="false">오늘 계획</button>
+        <button type="button" data-mode="breakdown" aria-checked="false">잘게 쪼개기</button>
+      </div>
+      <label class="field">
+        <span id="aiLabel">무엇을 도와드릴까요?</span>
+        <textarea id="aiText" rows="3" maxlength="2000"></textarea>
+      </label>
+      <button type="submit" class="primary-btn wide" id="aiSubmit">AI에게 부탁하기</button>
+      <div id="aiResult" class="ai-result" hidden>
+        <p class="ai-message" id="aiMessage"></p>
+        <div id="aiTasks"></div>
+        <div class="sheet-actions">
+          <button type="button" class="ghost" id="aiRetry">다시 만들기</button>
+          <button type="button" class="primary-btn" id="aiApply">선택한 항목 추가</button>
+        </div>
+      </div>
+    </form>
   </div>
 
   <div class="toast" id="toast" role="status" hidden>

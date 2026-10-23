@@ -1,5 +1,5 @@
 // to do list 서비스워커 — 오프라인 캐시 + 알림 버튼 처리
-const CACHE = 'todo-v1';
+const CACHE = 'todo-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -46,6 +46,24 @@ self.addEventListener('fetch', (e) => {
       })),
     );
   }
+});
+
+// 서버 푸시 수신 → 알림 표시 (iOS 잠금화면 포함)
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { notification: { title: 'to do list', body: e.data ? e.data.text() : '' } }; }
+  const n = data.notification || data;
+  const id = data.id || n.tag;
+  e.waitUntil(self.registration.showNotification(n.title || 'to do list', {
+    body: n.body || '',
+    tag: n.tag || id,
+    renotify: true,
+    requireInteraction: true,
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    data: { id: id && id !== '__test__' ? id : null },
+    actions: id && id !== '__test__' ? [{ action: 'done', title: '완료' }, { action: 'snooze', title: '10분 뒤' }] : [],
+  }));
 });
 
 self.addEventListener('notificationclick', (e) => {

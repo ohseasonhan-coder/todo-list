@@ -1,0 +1,14 @@
+{
+  "name": "todo-push",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute todo-push --remote --file schema.sql",
+    "test": "node --test test/webpush.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.2",
+    "http_ece": "1.2.1"
+  }
+}
