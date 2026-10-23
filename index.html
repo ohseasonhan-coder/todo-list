@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>to do list</title>
+  <meta name="description" content="쉽고 가벼운 할 일 목록 · 정해진 시각에 알림" />
+  <meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#111318" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="to do list" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="top-row">
+        <div>
+          <h1>to do list</h1>
+          <p class="today-label" id="todayLabel"></p>
+        </div>
+        <button class="icon-btn" id="settingsBtn" aria-label="설정">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+      <div class="progress" id="progressWrap">
+        <div class="progress-bar"><span id="progressFill"></span></div>
+        <span class="progress-text" id="progressText"></span>
+      </div>
+      <div class="banner" id="notifyBanner" hidden>
+        <span>🔔 알림을 켜면 정해진 시각에 알려드려요.</span>
+        <button class="chip-btn primary" id="bannerEnable">알림 켜기</button>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-view="today" class="tab">오늘 <b id="cntToday"></b></button>
+        <button role="tab" data-view="upcoming" class="tab">예정 <b id="cntUpcoming"></b></button>
+        <button role="tab" data-view="all" class="tab">모두 <b id="cntAll"></b></button>
+        <button role="tab" data-view="done" class="tab">완료</button>
+      </nav>
+    </header>
+
+    <main id="list" class="list" aria-live="polite"></main>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <div class="parse-preview" id="parsePreview" hidden></div>
+      <div class="composer-row">
+        <input id="quickInput" type="text" enterkeyhint="done"
+               placeholder="할 일 입력 · 예) 내일 오후 3시 치과" aria-label="할 일 입력" />
+        <button type="button" class="icon-btn subtle" id="detailBtn" aria-label="자세히 추가">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        </button>
+        <button type="submit" class="add-btn" aria-label="추가">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 편집 시트 -->
+  <div class="sheet-backdrop" id="editBackdrop" hidden>
+    <form class="sheet" id="editForm" autocomplete="off">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2 id="editTitle">할 일</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">✕</button>
+      </div>
+      <label class="field">
+        <span>할 일</span>
+        <input name="title" type="text" required maxlength="200" placeholder="무엇을 할까요?" />
+      </label>
+      <label class="field">
+        <span>메모</span>
+        <textarea name="note" rows="2" placeholder="선택 사항"></textarea>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>날짜</span>
+          <input name="due" type="date" />
+        </label>
+        <label class="field">
+          <span>시간</span>
+          <input name="time" type="time" />
+        </label>
+      </div>
+      <div class="quick-dates">
+        <button type="button" class="chip-btn" data-date="0">오늘</button>
+        <button type="button" class="chip-btn" data-date="1">내일</button>
+        <button type="button" class="chip-btn" data-date="weekend">이번 주말</button>
+        <button type="button" class="chip-btn" data-date="7">다음 주</button>
+        <button type="button" class="chip-btn" data-date="none">날짜 없음</button>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span>알림</span>
+          <select name="remind">
+            <option value="off">끄기</option>
+            <option value="0">정시에</option>
+            <option value="5">5분 전</option>
+            <option value="10">10분 전</option>
+            <option value="30">30분 전</option>
+            <option value="60">1시간 전</option>
+            <option value="1440">하루 전</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>반복</span>
+          <select name="repeat">
+            <option value="none">안 함</option>
+            <option value="daily">매일</option>
+            <option value="weekdays">평일</option>
+            <option value="weekly">매주</option>
+            <option value="monthly">매월</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint" id="remindHint"></p>
+      <label class="toggle">
+        <input type="checkbox" name="important" />
+        <span>⭐ 중요 표시</span>
+      </label>
+      <div class="sheet-actions">
+        <button type="button" class="ghost danger" id="deleteBtn">삭제</button>
+        <button type="button" class="ghost" id="icsBtn" title="휴대폰 캘린더 앱에 알림과 함께 추가">📅 캘린더에 추가</button>
+        <button type="submit" class="primary-btn">저장</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 설정 시트 -->
+  <div class="sheet-backdrop" id="settingsBackdrop" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2>설정</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">✕</button>
+      </div>
+      <section class="set-group">
+        <h3>알림</h3>
+        <p class="set-status" id="permStatus"></p>
+        <div class="set-actions">
+          <button class="chip-btn primary" id="enableNotify">알림 켜기</button>
+          <button class="chip-btn" id="testNotify">테스트 알림 보내기</button>
+        </div>
+        <label class="field">
+          <span>날짜만 있고 시간이 없는 할 일의 알림 시각</span>
+          <input type="time" id="defaultTime" />
+        </label>
+        <p class="hint">휴대폰에서는 앱을 <b>홈 화면에 설치</b>해야 알림이 옵니다. 앱을 완전히 닫아 둔 상태에서도 확실히 받고 싶은 할 일은 편집 화면의 <b>📅 캘린더에 추가</b>를 눌러 주세요.</p>
+      </section>
+      <section class="set-group">
+        <h3>앱 설치</h3>
+        <p class="hint" id="installHint"></p>
+        <button class="chip-btn primary" id="installBtn" hidden>홈 화면에 설치</button>
+      </section>
+      <section class="set-group">
+        <h3>데이터</h3>
+        <div class="set-actions">
+          <button class="chip-btn" id="exportBtn">백업 내보내기</button>
+          <label class="chip-btn file-btn">백업 불러오기<input type="file" id="importInput" accept="application/json,.json" hidden /></label>
+          <button class="chip-btn danger" id="clearDoneBtn">완료 항목 비우기</button>
+        </div>
+        <p class="hint">할 일은 이 기기의 브라우저에만 저장됩니다.</p>
+      </section>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden>
+    <span id="toastText"></span>
+    <button id="toastAction" class="toast-action" hidden>되돌리기</button>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
