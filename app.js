@@ -111,10 +111,56 @@ function mondayOf(dateStr) {
   return addDays(dateStr, -((d.getDay() + 6) % 7));
 }
 
-const REPEAT_LABEL = { none: '', daily: '매일', weekdays: '평일', weekly: '매주', monthly: '매월' };
 const REMIND_LABEL = { 0: '정시', 5: '5분 전', 10: '10분 전', 30: '30분 전', 60: '1시간 전', 1440: '하루 전' };
+const dow = (dateStr) => parseYmd(dateStr).getDay();
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 월요일부터
 
-function stepRepeat(dateStr, repeat, anchorDay) {
+// "🔁 월·수·금 · 12월 31일까지" 같은 반복 설명
+function repeatLabel(x) {
+  if (!x.repeat || x.repeat === 'none') return '';
+  let base;
+  if (x.repeat === 'daily') base = '매일';
+  else if (x.repeat === 'weekdays') base = '평일';
+  else if (x.repeat === 'monthly') base = `매월 ${x.anchorDay || (x.due ? parseYmd(x.due).getDate() : '')}일`;
+  else {
+    const days = x.repeatDays?.length ? x.repeatDays : x.due ? [dow(x.due)] : [];
+    const key = [...days].sort().join('');
+    base = key === '0123456' ? '매일' : key === '12345' ? '평일' : key === '06' ? '주말'
+      : `매주 ${WEEK_ORDER.filter((d) => days.includes(d)).map((d) => WD[d]).join('·')}`;
+  }
+  return x.repeatUntil ? `${base} · ${dateLabel(x.repeatUntil, false)}까지` : base;
+}
+
+// 반복 규칙 정리: 예전 '평일'은 요일 선택으로 바꾸고, 시작일을 고른 요일에 맞춤
+function normalizeRepeat(x) {
+  if (x.repeat === 'weekdays') { x.repeat = 'weekly'; x.repeatDays = [1, 2, 3, 4, 5]; }
+  if (!x.repeat || x.repeat === 'none') { x.repeatDays = null; x.repeatUntil = null; return x; }
+  if (x.repeat !== 'weekly') x.repeatDays = null;
+  if (!x.due) x.due = todayStr();
+  if (x.repeat === 'weekly') {
+    if (!x.repeatDays?.length) x.repeatDays = [dow(x.due)];
+    x.repeatDays = [...new Set(x.repeatDays.map(Number))].filter((d) => d >= 0 && d <= 6).sort();
+    while (!x.repeatDays.includes(dow(x.due))) x.due = addDays(x.due, 1);
+  }
+  if (x.repeat === 'monthly') x.anchorDay = x.anchorDay || parseYmd(x.due).getDate();
+  else x.anchorDay = null;
+  if (x.repeatUntil && !/^\d{4}-\d{2}-\d{2}$/.test(x.repeatUntil)) x.repeatUntil = null;
+  return x;
+}
+
+// 종료일이 지난 루틴은 끝난 것으로 처리 (true면 이번에 끝남)
+function endRoutineIfOver(x) {
+  if (x.done || !x.repeat || x.repeat === 'none' || !x.repeatUntil || !x.due || x.due <= x.repeatUntil) return false;
+  x.done = true;
+  x.doneAt = Date.now();
+  x.snoozeUntil = null;
+  x.pausedUntil = null;
+  x.pauseFrom = null;
+  return true;
+}
+const withinUntil = (x, d) => !x.repeatUntil || d <= x.repeatUntil;
+
+function stepRepeat(dateStr, repeat, anchorDay, days) {
   switch (repeat) {
     case 'daily': return addDays(dateStr, 1);
     case 'weekdays': {
@@ -122,7 +168,12 @@ function stepRepeat(dateStr, repeat, anchorDay) {
       while ([0, 6].includes(parseYmd(n).getDay())) n = addDays(n, 1);
       return n;
     }
-    case 'weekly': return addDays(dateStr, 7);
+    case 'weekly': {
+      if (!days?.length) return addDays(dateStr, 7);
+      let n = addDays(dateStr, 1);
+      for (let i = 0; i < 7 && !days.includes(dow(n)); i++) n = addDays(n, 1);
+      return n;
+    }
     case 'monthly': {
       const d = parseYmd(dateStr);
       const day = anchorDay || d.getDate();
@@ -134,8 +185,8 @@ function stepRepeat(dateStr, repeat, anchorDay) {
 }
 function nextDue(task) {
   const t = todayStr();
-  let n = stepRepeat(task.due, task.repeat, task.anchorDay);
-  while (n < t) n = stepRepeat(n, task.repeat, task.anchorDay);
+  let n = stepRepeat(task.due, task.repeat, task.anchorDay, task.repeatDays);
+  while (n < t) n = stepRepeat(n, task.repeat, task.anchorDay, task.repeatDays);
   return n;
 }
 
@@ -147,7 +198,7 @@ const isPaused = (x) => !!x.pausedUntil && x.pausedUntil > todayStr();
 // start부터 반복 규칙대로 넘겨 target 이후 첫 날짜를 찾음
 function firstOnOrAfter(task, start, target) {
   let n = start;
-  while (n < target) n = stepRepeat(n, task.repeat, task.anchorDay);
+  while (n < target) n = stepRepeat(n, task.repeat, task.anchorDay, task.repeatDays);
   return n;
 }
 function pauseTask(x, until) {
@@ -156,6 +207,7 @@ function pauseTask(x, until) {
   x.pausedUntil = until;
   x.due = firstOnOrAfter(x, x.pauseFrom || x.due, until);
   x.snoozeUntil = null;
+  endRoutineIfOver(x);
   settleReminder(x);
   return true;
 }
@@ -205,7 +257,7 @@ function upcomingWeekday(idx) {
 
 function parseQuick(raw) {
   let s = ` ${raw} `;
-  const out = { title: '', due: null, time: null, repeat: 'none', important: false, anchorDay: null };
+  const out = { title: '', due: null, time: null, repeat: 'none', important: false, anchorDay: null, repeatDays: null, repeatUntil: null };
   const t = todayStr();
   const take = (re, fn) => {
     const m = s.match(re);
@@ -214,12 +266,32 @@ function parseQuick(raw) {
     s = s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length);
     return true;
   };
+  // "월수금", "월,수,금", "월요일 수요일" → [1,3,5]
+  const DAYSEQ = '((?:[월화수목금토일](?:요일)?\\s?[,·/]?\\s?)*[월화수목금토일](?:요일)?)';
+  const parseDays = (str) => [...new Set([...str.replace(/요일/g, '')].map((c) => WD.indexOf(c)).filter((i) => i >= 0))];
+  const setWeekly = (days) => {
+    out.repeat = 'weekly';
+    out.repeatDays = days;
+    let d = t;
+    while (!days.includes(dow(d))) d = addDays(d, 1);
+    out.due = d;
+  };
 
   // 반복
-  take(new RegExp(`\\s매주\\s?${WD_RE}(?:마다)?${PARTICLE}${END}`), (m) => {
-    out.repeat = 'weekly';
-    out.due = upcomingWeekday(WD.indexOf(m[1]));
+  take(new RegExp(`\\s(?:매주\\s?${DAYSEQ}(?:마다)?|${DAYSEQ}마다)${PARTICLE}${END}`), (m) => {
+    const days = parseDays(m[1] || m[2]);
+    if (!days.length) return false;
+    setWeekly(days);
   }) ||
+  // "월수금 7시 운동", "월,수,금"처럼 요일을 두 개 이상 나열하면 반복으로 봄 (금일·수금 같은 낱말은 제외)
+  take(new RegExp(`\\s${DAYSEQ}${PARTICLE}${END}`), (m) => {
+    const token = m[1].replace(/\s/g, '');
+    if (['금일', '수금', '일일', '월일', '일월'].includes(token)) return false;
+    const days = parseDays(m[1]);
+    if (days.length < 2) return false;
+    setWeekly(days);
+  }) ||
+  take(new RegExp(`\\s(?:매주\\s?)?주말(?:마다)${PARTICLE}${END}`), () => setWeekly([0, 6])) ||
   take(new RegExp(`\\s(?:매달|매월)\\s?(\\d{1,2})일${PARTICLE}${END}`), (m) => {
     const day = +m[1];
     if (day < 1 || day > 31) return false;
@@ -231,9 +303,34 @@ function parseQuick(raw) {
     out.due = ymd(d);
   }) ||
   take(new RegExp(`\\s매일(?:마다)?${END}`), () => { out.repeat = 'daily'; }) ||
-  take(new RegExp(`\\s(?:평일|주중)(?:마다)?${PARTICLE}${END}`), () => { out.repeat = 'weekdays'; }) ||
+  take(new RegExp(`\\s(?:매주\\s?)?(?:평일|주중)(?:마다)?${PARTICLE}${END}`), () => setWeekly([1, 2, 3, 4, 5])) ||
   take(new RegExp(`\\s매주(?:마다)?${END}`), () => { out.repeat = 'weekly'; }) ||
   take(new RegExp(`\\s(?:매달|매월)(?:마다)?${END}`), () => { out.repeat = 'monthly'; });
+
+  // 반복 기간: "12월 31일까지", "12/31까지", "2주 동안", "3개월간", "이번 달까지", "연말까지"
+  if (out.repeat !== 'none') {
+    const untilDate = (mo, day) => {
+      if (mo < 1 || mo > 12 || day < 1 || day > 31) return false;
+      const now = new Date();
+      let d = new Date(now.getFullYear(), mo - 1, day);
+      if (d.getMonth() !== mo - 1) return false;
+      if (ymd(d) < t) d = new Date(now.getFullYear() + 1, mo - 1, day);
+      out.repeatUntil = ymd(d);
+    };
+    const addMonths = (n) => { const d = parseYmd(t); d.setMonth(d.getMonth() + n); d.setDate(d.getDate() - 1); return ymd(d); };
+    take(new RegExp(`\\s(\\d{1,2})월\\s?(\\d{1,2})일\\s?까지${END}`), (m) => untilDate(+m[1], +m[2])) ||
+    take(new RegExp(`\\s(\\d{1,2})\\s?/\\s?(\\d{1,2})\\s?까지${END}`), (m) => untilDate(+m[1], +m[2])) ||
+    take(new RegExp(`\\s(\\d{1,3})\\s?(일|주|개월|달)\\s?(?:동안|간)${END}`), (m) => {
+      const n = +m[1];
+      if (!n) return false;
+      out.repeatUntil = m[2] === '일' ? addDays(t, n - 1) : m[2] === '주' ? addDays(t, n * 7 - 1) : addMonths(n);
+    }) ||
+    take(new RegExp(`\\s이번\\s?달\\s?(?:까지|동안)${END}`), () => {
+      const d = parseYmd(t);
+      out.repeatUntil = ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    }) ||
+    take(new RegExp(`\\s(?:연말|올해|올\\s?연말)\\s?(?:까지|동안)${END}`), () => { out.repeatUntil = `${t.slice(0, 4)}-12-31`; });
+  }
 
   // 날짜
   if (!out.due) {
@@ -279,11 +376,13 @@ function parseQuick(raw) {
   take(/\s(?:!+|중요)(?=\s)/, () => { out.important = true; });
 
   if (out.time && !out.due) out.due = at(t, out.time) > Date.now() ? t : addDays(t, 1);
-  if (out.repeat !== 'none' && !out.due) out.due = t;
-  if (out.repeat === 'weekdays' && out.due) {
-    while ([0, 6].includes(parseYmd(out.due).getDay())) out.due = addDays(out.due, 1);
+  if (out.repeat !== 'none') {
+    normalizeRepeat(out);
+    // 오늘이 첫 회차인데 시간이 이미 지났으면 다음 회차부터
+    if (out.due === t && out.time && at(t, out.time) <= Date.now()) {
+      out.due = stepRepeat(t, out.repeat, out.anchorDay, out.repeatDays);
+    }
   }
-  if (out.repeat === 'monthly' && !out.anchorDay && out.due) out.anchorDay = parseYmd(out.due).getDate();
 
   out.title = s.replace(/\s+/g, ' ').trim() || raw.trim();
   return out;
@@ -357,7 +456,7 @@ function taskHTML(x) {
     const soon = !x.done && x.due === t && x.time && !pastTime && at(x.due, x.time) - Date.now() < 3600e3;
     if (label) meta.push(`<span class="${late || pastTime ? 'late' : soon ? 'soon' : ''}">${late ? '⚠ ' : ''}${esc(label)}</span>`);
   }
-  if (x.repeat && x.repeat !== 'none') meta.push(`<span>🔁 ${REPEAT_LABEL[x.repeat]}</span>`);
+  if (x.repeat && x.repeat !== 'none') meta.push(`<span>🔁 ${esc(repeatLabel(x))}</span>`);
   if (!x.done && isPaused(x)) meta.push(`<span class="paused">⏸ ${esc(dateLabel(x.pausedUntil, false))}까지 쉬는 중</span>`);
   if (!x.done && x.due && x.remind != null) meta.push(`<span title="알림">🔔 ${x.snoozeUntil ? `${SNOOZE_MIN}분 뒤` : REMIND_LABEL[x.remind] ?? ''}</span>`);
   return `
@@ -450,11 +549,21 @@ function toggleDone(id, { animate = true } = {}) {
   if (!x) return;
   const before = snapshot();
   const apply = () => {
-    if (!x.done && x.repeat && x.repeat !== 'none' && x.due) {
-      tasks.push({ ...x, id: uid(), repeat: 'none', done: true, doneAt: Date.now(), notifiedKey: null, snoozeUntil: null, pausedUntil: null, pauseFrom: null });
+    const next = !x.done && x.repeat && x.repeat !== 'none' && x.due ? nextDue(x) : null;
+    if (next && !withinUntil(x, next)) {
+      // 종료일 전 마지막 회차 → 루틴 자체를 완료
+      x.done = true;
+      x.doneAt = Date.now();
+      x.snoozeUntil = null;
+      toast('🎉 마지막 회차까지 끝냈어요', () => restore(before));
+    } else if (next) {
+      tasks.push({
+        ...x, id: uid(), repeat: 'none', repeatDays: null, repeatUntil: null, done: true, doneAt: Date.now(),
+        notifiedKey: null, snoozeUntil: null, pausedUntil: null, pauseFrom: null,
+      });
       x.pausedUntil = null;
       x.pauseFrom = null;
-      x.due = nextDue(x);
+      x.due = next;
       x.snoozeUntil = null;
       settleReminder(x);
       toast(`완료! 다음 일정: ${dateLabel(x.due)}`, () => restore(before));
@@ -496,7 +605,7 @@ function moveTask(x, date, time) {
   const routine = x.repeat && x.repeat !== 'none' && x.due;
   if (routine && time === undefined) {
     let n = firstOnOrAfter(x, x.due, date);
-    if (n === x.due) n = stepRepeat(n, x.repeat, x.anchorDay);
+    if (n === x.due) n = stepRepeat(n, x.repeat, x.anchorDay, x.repeatDays);
     x.due = n;
   } else {
     x.due = date;
@@ -508,6 +617,7 @@ function moveTask(x, date, time) {
   x.pausedUntil = null;
   x.pauseFrom = null;
   x.snoozeUntil = null;
+  endRoutineIfOver(x);
   settleReminder(x);
   closeNotification(x.id);
 }
@@ -521,7 +631,9 @@ function postpone(id, date, time, label) {
   save();
   render();
   const when = `${dateLabel(x.due)}${x.time ? ` ${timeLabel(x.time)}` : ''}`;
-  toast(label || (routineSkip ? `이번 회차는 건너뛰어요 · 다음: ${when}` : `미뤘어요 · ${when}`), () => restore(before));
+  const msg = x.done ? '반복 기간이 끝나서 루틴을 마쳤어요'
+    : routineSkip ? `이번 회차는 건너뛰어요 · 다음: ${when}` : `미뤘어요 · ${when}`;
+  toast(label || msg, () => restore(before));
 }
 
 function bulkMoveOverdue(target) {
@@ -534,6 +646,7 @@ function bulkMoveOverdue(target) {
     if (x.repeat && x.repeat !== 'none') {
       x.due = firstOnOrAfter(x, x.due, date);
       x.snoozeUntil = null;
+      endRoutineIfOver(x);
       settleReminder(x);
     } else moveTask(x, date);
   }
@@ -559,6 +672,8 @@ function newTask(data) {
     time: data.time || null,
     remind: data.remind ?? null,
     repeat: data.repeat || 'none',
+    repeatDays: data.repeatDays || null,
+    repeatUntil: data.repeatUntil || null,
     anchorDay: data.anchorDay || null,
     important: !!data.important,
     done: false,
@@ -567,8 +682,7 @@ function newTask(data) {
     notifiedKey: null,
     snoozeUntil: null,
   };
-  if (task.repeat !== 'none' && !task.due) task.due = todayStr();
-  if (task.repeat === 'monthly' && !task.anchorDay && task.due) task.anchorDay = parseYmd(task.due).getDate();
+  normalizeRepeat(task);
   settleReminder(task);
   return task;
 }
@@ -593,7 +707,7 @@ function previewPills(p) {
   const pills = [];
   if (p.due) pills.push(`📅 ${dateLabel(p.due)}`);
   if (p.time) pills.push(`⏰ ${timeLabel(p.time)}`);
-  if (p.repeat !== 'none') pills.push(`🔁 ${REPEAT_LABEL[p.repeat]}`);
+  if (p.repeat !== 'none') pills.push(`🔁 ${repeatLabel(p)}`);
   if (p.important) pills.push('⭐ 중요');
   return pills;
 }
@@ -643,7 +757,9 @@ function openEditor(task, prefill = {}) {
   form.due.value = src.due || '';
   form.time.value = src.time || '';
   form.remind.value = task ? (task.remind == null ? 'off' : String(task.remind)) : (src.time ? '0' : 'off');
-  form.repeat.value = src.repeat || 'none';
+  const rep = src.repeat === 'weekdays' ? 'weekly' : src.repeat || 'none';
+  editDays = src.repeat === 'weekdays' ? [1, 2, 3, 4, 5] : src.repeatDays ? [...src.repeatDays] : [];
+  setRepeatUI(rep, src.repeatUntil || '');
   form.important.checked = !!src.important;
   $('#deleteBtn').hidden = !task;
   $('#breakdownBtn').hidden = !API_BASE;
@@ -665,6 +781,51 @@ function updateRemindHint() {
   const when = `${dateLabel(ymd(d))} ${timeLabel(`${pad(d.getHours())}:${pad(d.getMinutes())}`)}`;
   hint.textContent = f < Date.now() ? `⚠ 알림 시각(${when})이 이미 지났어요.` : `🔔 ${when}에 알려드려요.`;
 }
+
+/* 반복: 안 함 / 매일 / 요일 선택 / 매월 + 언제까지 (비우면 계속) */
+let editDays = [];
+
+function setRepeatUI(repeat, until) {
+  form.repeat.value = repeat;
+  $$('#repeatSeg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.repeat === repeat)));
+  $('#repeatBox').hidden = repeat === 'none';
+  $('#weekdayBox').hidden = repeat !== 'weekly';
+  if (repeat === 'weekly' && !editDays.length) editDays = [dow(form.due.value || todayStr())];
+  if (until !== undefined) form.until.value = until;
+  renderRepeatUI();
+}
+
+function renderRepeatUI() {
+  $$('#wdRow button').forEach((b) => b.setAttribute('aria-pressed', String(editDays.includes(Number(b.dataset.d)))));
+  $('#untilClear').setAttribute('aria-pressed', String(!form.until.value));
+  form.until.min = form.due.value || todayStr();
+  const repeat = form.repeat.value;
+  const hint = $('#repeatHint');
+  if (repeat === 'none') { hint.textContent = ''; return; }
+  const probe = normalizeRepeat({
+    repeat, repeatDays: repeat === 'weekly' ? editDays : null, repeatUntil: form.until.value || null,
+    due: form.due.value || todayStr(), anchorDay: null,
+  });
+  if (probe.repeatUntil && probe.repeatUntil < probe.due) { hint.textContent = '⚠ 종료일이 첫 회차보다 빨라요.'; return; }
+  hint.textContent = `🔁 ${repeatLabel(probe)}${probe.repeatUntil ? '' : ' · 계속 반복'} · 첫 회차 ${dateLabel(probe.due)}`;
+}
+
+$$('#repeatSeg button').forEach((b) => b.addEventListener('click', () => setRepeatUI(b.dataset.repeat)));
+$$('#wdRow button').forEach((b) => b.addEventListener('click', () => {
+  const d = Number(b.dataset.d);
+  if (editDays.includes(d)) {
+    if (editDays.length === 1) { toast('요일을 하나 이상 골라 주세요'); return; }
+    editDays = editDays.filter((x) => x !== d);
+  } else editDays = [...editDays, d];
+  renderRepeatUI();
+}));
+$$('.wd-presets [data-preset]').forEach((b) => b.addEventListener('click', () => {
+  editDays = [...b.dataset.preset].map(Number);
+  renderRepeatUI();
+}));
+$('#untilClear').addEventListener('click', () => { form.until.value = ''; renderRepeatUI(); });
+form.due.addEventListener('change', renderRepeatUI);
+form.until.addEventListener('input', renderRepeatUI);
 
 form.addEventListener('input', updateRemindHint);
 form.time.addEventListener('change', () => {
@@ -692,14 +853,21 @@ form.addEventListener('submit', (e) => {
     time: form.time.value || null,
     remind: form.remind.value === 'off' ? null : Number(form.remind.value),
     repeat: form.repeat.value,
+    repeatDays: form.repeat.value === 'weekly' ? [...editDays] : null,
+    repeatUntil: form.repeat.value !== 'none' ? form.until.value || null : null,
     important: form.important.checked,
   };
   if ((data.time || data.repeat !== 'none') && !data.due) data.due = todayStr();
-  data.anchorDay = data.repeat === 'monthly' && data.due ? parseYmd(data.due).getDate() : null;
+  const prevAnchor = editingId ? findTask(editingId)?.anchorDay : null;
+  // 매월 반복은 날짜를 바꿨을 때만 기준일을 새로 잡음
+  data.anchorDay = data.repeat === 'monthly' && prevAnchor && findTask(editingId)?.due === data.due ? prevAnchor : null;
+  normalizeRepeat(data);
+  if (data.repeatUntil && data.repeatUntil < data.due) { toast('“언제까지”가 첫 회차보다 빨라요'); return; }
 
   if (editingId) {
     const x = findTask(editingId);
-    const timingChanged = x.due !== data.due || x.time !== data.time || x.remind !== data.remind;
+    const repeatChanged = x.repeat !== data.repeat || String(x.repeatDays) !== String(data.repeatDays) || x.repeatUntil !== data.repeatUntil;
+    const timingChanged = x.due !== data.due || x.time !== data.time || x.remind !== data.remind || repeatChanged;
     const dueChanged = x.due !== data.due;
     Object.assign(x, data);
     if (x.repeat === 'none' || dueChanged) { x.pausedUntil = null; x.pauseFrom = null; }
@@ -767,9 +935,11 @@ $('#icsBtn').addEventListener('click', () => {
     time: form.time.value,
     remind: form.remind.value === 'off' ? null : Number(form.remind.value),
     repeat: form.repeat.value,
+    repeatDays: form.repeat.value === 'weekly' ? [...editDays] : null,
+    repeatUntil: form.until.value || null,
   };
   if (!data.due) return;
-  downloadICS(data);
+  downloadICS(normalizeRepeat(data));
 });
 
 /* ---------------- sheets ---------------- */
@@ -912,7 +1082,7 @@ function quickOptions(x) {
   const tomorrow = addDays(t, 1);
   if (routine) {
     let next = firstOnOrAfter(x, x.due || t, tomorrow);
-    if (next === x.due) next = stepRepeat(next, x.repeat, x.anchorDay);
+    if (next === x.due) next = stepRepeat(next, x.repeat, x.anchorDay, x.repeatDays);
     opts.push({ label: '이번 회차 건너뛰기', sub: `다음: ${dateLabel(next)}`, date: tomorrow });
   } else {
     opts.push({ label: '내일 아침', sub: `${dateLabel(tomorrow)} ${timeLabel(settings.defaultTime)}`, date: tomorrow, time: settings.defaultTime });
@@ -981,7 +1151,14 @@ function downloadICS(t) {
   } else {
     lines.push(`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${addDays(t.due, 1).replace(/-/g, '')}`);
   }
-  const rule = { daily: 'FREQ=DAILY', weekdays: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY' }[t.repeat];
+  const BYDAY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  let rule = {
+    daily: 'FREQ=DAILY',
+    weekdays: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+    weekly: `FREQ=WEEKLY${t.repeatDays?.length ? `;BYDAY=${t.repeatDays.map((d) => BYDAY[d]).join(',')}` : ''}`,
+    monthly: 'FREQ=MONTHLY',
+  }[t.repeat];
+  if (rule && t.repeatUntil) rule += `;UNTIL=${t.repeatUntil.replace(/-/g, '')}${t.time ? 'T235959' : ''}`;
   if (rule) lines.push(`RRULE:${rule}`);
   if (t.note) lines.push(`DESCRIPTION:${icsEscape(t.note)}`);
   if (t.remind != null) {
@@ -1192,7 +1369,7 @@ function upcomingReminders(x) {
   }
   if (!x.repeat || x.repeat === 'none' || x.remind == null) return list;
   const horizon = addDays(todayStr(), ROUTINE_HORIZON_DAYS);
-  for (let d = stepRepeat(x.due, x.repeat, x.anchorDay); d <= horizon; d = stepRepeat(d, x.repeat, x.anchorDay)) {
+  for (let d = stepRepeat(x.due, x.repeat, x.anchorDay, x.repeatDays); d <= horizon && withinUntil(x, d); d = stepRepeat(d, x.repeat, x.anchorDay, x.repeatDays)) {
     const f = at(d, x.time || settings.defaultTime) - x.remind * 60000;
     list.push({ id: `${x.id}@${d}`, fireAt: f, title: x.title, body: reminderBody(x, f, d) });
   }
@@ -1204,7 +1381,7 @@ function occurrencesBetween(x, from, to) {
   if (!x.due) return [];
   if (!x.repeat || x.repeat === 'none') return x.due >= from && x.due <= to ? [x.due] : [];
   const out = [];
-  for (let d = firstOnOrAfter(x, x.due, from); d <= to; d = stepRepeat(d, x.repeat, x.anchorDay)) out.push(d);
+  for (let d = firstOnOrAfter(x, x.due, from); d <= to && withinUntil(x, d); d = stepRepeat(d, x.repeat, x.anchorDay, x.repeatDays)) out.push(d);
   return out;
 }
 
@@ -1392,7 +1569,7 @@ function renderAIResult(message) {
   $('#aiResult').hidden = false;
   $('#aiMessage').textContent = message || (aiTasks.length ? '' : '만들 할 일을 찾지 못했어요.');
   $('#aiTasks').innerHTML = aiTasks.map((x, i) => {
-    const meta = [x.due ? dateLabel(x.due) : '', x.time ? timeLabel(x.time) : '', x.repeat !== 'none' ? `🔁 ${REPEAT_LABEL[x.repeat]}` : '', x.important ? '⭐' : '']
+    const meta = [x.due ? dateLabel(x.due) : '', x.time ? timeLabel(x.time) : '', x.repeat !== 'none' ? `🔁 ${repeatLabel(normalizeRepeat({ ...x }))}` : '', x.important ? '⭐' : '']
       .filter(Boolean).join(' · ');
     const existing = aiMode === 'today' && findOpenByTitle(x.title);
     return `<label class="ai-item"><input type="checkbox" data-i="${i}" checked />
@@ -1420,14 +1597,8 @@ $('#aiApply').addEventListener('click', () => {
       updated++;
       continue;
     }
-    const task = {
-      id: uid(), title: p.title, note: p.note || '', due: p.due, time: p.time,
-      remind: p.time ? 0 : null, repeat: p.repeat, important: p.important,
-      anchorDay: p.repeat === 'monthly' && p.due ? parseYmd(p.due).getDate() : null,
-      done: false, doneAt: null, createdAt: Date.now() + added, notifiedKey: null, snoozeUntil: null,
-    };
-    if (task.repeat !== 'none' && !task.due) task.due = todayStr();
-    settleReminder(task);
+    const task = newTask({ ...p, remind: p.time ? 0 : null });
+    task.createdAt = Date.now() + added;
     tasks.push(task);
     added++;
   }
@@ -1901,6 +2072,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 if (clearExpiredPauses()) safeSet(STORE_KEY, tasks);
+// 예전 반복 형식(평일, 요일 없는 매주)을 요일 선택 방식으로 바꿔 둠
+const legacyRoutines = tasks.filter((x) => !x.done && (x.repeat === 'weekdays' || (x.repeat === 'weekly' && !x.repeatDays?.length)));
+if (legacyRoutines.length) { legacyRoutines.forEach(normalizeRepeat); save(); }
 render();
 scheduleReminders();
 syncData();

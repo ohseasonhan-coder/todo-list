@@ -109,18 +109,38 @@
             <option value="1440">하루 전</option>
           </select>
         </label>
-        <label class="field">
-          <span>반복</span>
-          <select name="repeat">
-            <option value="none">안 함</option>
-            <option value="daily">매일</option>
-            <option value="weekdays">평일</option>
-            <option value="weekly">매주</option>
-            <option value="monthly">매월</option>
-          </select>
-        </label>
       </div>
       <p class="hint" id="remindHint"></p>
+      <div class="field">
+        <span>반복</span>
+        <input type="hidden" name="repeat" value="none" />
+        <div class="seg" id="repeatSeg" role="radiogroup" aria-label="반복">
+          <button type="button" data-repeat="none" aria-checked="true">안 함</button>
+          <button type="button" data-repeat="daily" aria-checked="false">매일</button>
+          <button type="button" data-repeat="weekly" aria-checked="false">요일 선택</button>
+          <button type="button" data-repeat="monthly" aria-checked="false">매월</button>
+        </div>
+      </div>
+      <div class="repeat-box" id="repeatBox" hidden>
+        <div id="weekdayBox" hidden>
+          <div class="wd-row" id="wdRow" role="group" aria-label="반복할 요일">
+            <button type="button" data-d="1">월</button><button type="button" data-d="2">화</button><button type="button" data-d="3">수</button><button type="button" data-d="4">목</button><button type="button" data-d="5">금</button><button type="button" data-d="6" class="sat">토</button><button type="button" data-d="0" class="sun">일</button>
+          </div>
+          <div class="wd-presets">
+            <button type="button" class="mini-btn" data-preset="12345">평일</button>
+            <button type="button" class="mini-btn" data-preset="06">주말</button>
+            <button type="button" class="mini-btn" data-preset="0123456">매일</button>
+          </div>
+        </div>
+        <div class="until-row">
+          <label class="field">
+            <span>언제까지</span>
+            <input type="date" name="until" />
+          </label>
+          <button type="button" class="chip-btn" id="untilClear">계속 반복</button>
+        </div>
+        <p class="hint" id="repeatHint"></p>
+      </div>
       <div class="pause-box" id="pauseBox" hidden>
         <div class="pause-head">⏸ 루틴 일시정지 <small>여행 등으로 못 지킬 때</small></div>
         <p class="hint" id="pauseStatus"></p>
