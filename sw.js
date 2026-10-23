@@ -1,5 +1,5 @@
 // to do list 서비스워커 — 오프라인 캐시 + 알림 버튼 처리
-const CACHE = 'todo-v6';
+const CACHE = 'todo-v7';
 const ASSETS = [
   './',
   './index.html',

@@ -146,6 +146,10 @@ h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
 .quick-opt b { font-size: 15px; }
 .quick-opt span { font-size: 13px; color: var(--text-2); }
 .quick-opt:hover { border-color: var(--accent); }
+.hourly-row { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.hourly-row .field { margin: 0 0 10px; flex: 1 1 40%; }
+.hourly-row .field:first-child { flex-basis: 100%; }
+.meta .slots { color: var(--accent); font-weight: 700; }
 .repeat-box { background: var(--surface-2); border-radius: 14px; padding: 10px 12px; margin: 4px 0 10px; }
 .wd-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .wd-row button {
