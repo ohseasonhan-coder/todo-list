@@ -841,9 +841,17 @@ function snooze(id) {
   toast(`${SNOOZE_MIN}분 뒤에 다시 알려드릴게요`);
 }
 
-function handleAction(action, id) {
+function handleAction(action, rawId) {
+  // 서버 알림은 "할일id@회차날짜" 형식
+  const [id, occurrence] = String(rawId || '').split('@');
   if (!id || !findTask(id)) return;
-  if (action === 'done') { const x = findTask(id); if (!x.done) toggleDone(id, { animate: false }); }
+  if (action === 'done') {
+    const x = findTask(id);
+    if (x.done) return;
+    // 밀린 루틴을 알림으로 완료하면 그 회차 기준으로 다음 날짜를 잡음
+    if (occurrence && x.repeat !== 'none' && x.due && occurrence > x.due) x.due = occurrence;
+    toggleDone(id, { animate: false });
+  }
   else if (action === 'snooze') snooze(id);
   else if (action === 'open') openEditor(findTask(id));
 }
@@ -921,11 +929,30 @@ async function enablePush({ quiet = false } = {}) {
   }
 }
 
-function reminderBody(x, fireAt) {
+// 서버에 넘길 알림 목록. 반복 할 일은 앱을 열지 않아도 계속 울리도록 앞으로 ROUTINE_HORIZON_DAYS일치를 미리 넘김
+// (회차별 id는 "할일id@날짜")
+const ROUTINE_HORIZON_DAYS = 30;
+function upcomingReminders(x) {
+  const first = fireTime(x);
+  if (first == null) return [];
+  const list = [];
+  if (x.notifiedKey !== String(first)) {
+    list.push({ id: `${x.id}@${x.due}`, fireAt: first, title: x.title, body: reminderBody(x, first, x.due) });
+  }
+  if (!x.repeat || x.repeat === 'none') return list;
+  const horizon = addDays(todayStr(), ROUTINE_HORIZON_DAYS);
+  for (let d = stepRepeat(x.due, x.repeat, x.anchorDay); d <= horizon; d = stepRepeat(d, x.repeat, x.anchorDay)) {
+    const f = at(d, x.time || settings.defaultTime) - x.remind * 60000;
+    list.push({ id: `${x.id}@${d}`, fireAt: f, title: x.title, body: reminderBody(x, f, d) });
+  }
+  return list;
+}
+
+function reminderBody(x, fireAt, date = x.due) {
   const fireDay = ymd(new Date(fireAt));
   const parts = [];
-  const d = parseYmd(x.due);
-  const dayText = x.due === fireDay ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`;
+  const d = parseYmd(date);
+  const dayText = date === fireDay ? '' : `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`;
   const when = [dayText, x.time ? timeLabel(x.time) : ''].filter(Boolean).join(' ');
   parts.push(when || '오늘 할 일');
   if (x.note) parts.push(x.note);
@@ -943,11 +970,10 @@ async function syncPushNow() {
   if (!pushActive()) return;
   const now = Date.now();
   const reminders = tasks
-    .map((x) => ({ x, f: fireTime(x) }))
-    .filter(({ x, f }) => f != null && f > now && x.notifiedKey !== String(f))
-    .sort((a, b) => a.f - b.f)
-    .slice(0, 500)
-    .map(({ x, f }) => ({ id: x.id, fireAt: f, title: x.title, body: reminderBody(x, f) }));
+    .flatMap(upcomingReminders)
+    .filter((r) => r.fireAt > now)
+    .sort((a, b) => a.fireAt - b.fireAt)
+    .slice(0, 500);
   try {
     await api('/sync', { reminders });
     pushError = '';
@@ -1248,6 +1274,7 @@ function tick() {
     lastDay = todayStr();
     if (clearExpiredPauses()) safeSet(STORE_KEY, tasks);
     render();
+    syncPushNow(); // 루틴 알림 범위를 하루 앞으로 늘림
   }
   scheduleReminders();
 }

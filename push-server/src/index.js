@@ -116,6 +116,8 @@ function vapid(env) {
 }
 
 function pushTo(device, reminder, env) {
+  // 반복 할 일은 "할일id@날짜"로 회차마다 따로 저장됨. 알림 묶음(tag)은 할 일 단위로
+  const baseId = reminder.id.split('@')[0];
   const payload = JSON.stringify({
     // iOS 18.4+ Declarative Web Push 형식 (서비스워커가 없어도 표시됨) + 일반 서비스워커용 필드
     web_push: 8030,
@@ -123,12 +125,12 @@ function pushTo(device, reminder, env) {
       title: reminder.title,
       body: reminder.body || undefined,
       navigate: env.APP_URL,
-      tag: reminder.id,
+      tag: baseId,
     },
     id: reminder.id,
   });
   return sendPush({ endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth }, payload, vapid(env), {
-    topic: reminder.id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || undefined,
+    topic: baseId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || undefined,
   });
 }
 
