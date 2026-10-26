@@ -352,30 +352,53 @@ async function aiAssist({ deviceId, passcode, mode, text, today, now, context },
   return json({ message: String(parsed.message || '').slice(0, 500), tasks });
 }
 
-// 설정한 모델이 없어졌으면(404) 최신 별칭 모델로 자동 전환. 실패하면 원인 코드를 그대로 돌려줌
-async function callGemini(prompt, env) {
-  const models = [...new Set([env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash'].filter(Boolean))];
-  const body = JSON.stringify({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.4, responseMimeType: 'application/json', responseSchema: TASK_SCHEMA },
-  });
-  let last = null;
-  for (const model of models) {
+// 모델 하나에 요청. 생각(thinking)을 최소로 해서 빨리 답하게 하고, timeoutMs 안에 안 오면 끊음
+async function generateWith(model, prompt, env, timeoutMs) {
+  const generationConfig = { temperature: 0.4, responseMimeType: 'application/json', responseSchema: TASK_SCHEMA };
+  // 2.x 모델은 thinkingBudget, 3.x 이후·latest 별칭은 thinkingLevel로 생각을 줄임
+  if (/gemini-2\./.test(model)) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  else generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      body,
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig }),
+      signal: ctrl.signal,
     });
     if (res.ok) return res.json();
     const text = await res.text();
     let err = {};
     try { err = JSON.parse(text).error || {}; } catch { /* JSON 아님 */ }
-    const reason = err.details?.find((d) => d.reason)?.reason || err.status || 'UNKNOWN';
-    console.log('gemini error', model, res.status, reason, String(err.message || text).slice(0, 200));
-    last = { status: res.status, reason };
-    if (res.status !== 404) break; // 키·한도 문제는 다른 모델로 바꿔도 같음
+    const e = new Error(err.details?.find((d) => d.reason)?.reason || err.status || 'UNKNOWN');
+    e.status = res.status;
+    e.detail = String(err.message || text).slice(0, 200);
+    throw e;
+  } catch (err) {
+    if (err.name === 'AbortError') { const e = new Error('TIMEOUT'); e.status = 504; throw e; }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  throw httpError(502, `ai-upstream-${last.status}-${last.reason}`);
+}
+
+// 설정한 모델이 없어졌으면(404) 최신 별칭 모델로 자동 전환. 실패하면 원인 코드를 그대로 돌려줌
+async function callGemini(prompt, env) {
+  const models = [...new Set([env.GEMINI_MODEL, 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'].filter(Boolean))];
+  let last = null;
+  for (const [i, model] of models.entries()) {
+    try {
+      // 첫 모델은 좀 더 기다리고, 대체 모델은 빨리 포기
+      return await generateWith(model, prompt, env, i === 0 ? 20000 : 12000);
+    } catch (err) {
+      console.log('gemini error', model, err.status, err.message, err.detail || '');
+      last = err;
+      // 모델이 없거나(404) 붐비거나(429·500·503) 느리면(504) 다음 모델로. 키 문제(400·403)는 바꿔도 같아서 멈춤
+      if (![404, 429, 500, 503, 504].includes(err.status)) break;
+    }
+  }
+  throw httpError(502, `ai-upstream-${last?.status || 0}-${last?.message || 'UNKNOWN'}`);
 }
 
 function cleanTask(t) {
@@ -409,7 +432,13 @@ function buildPrompt(mode, text, today, now, context) {
   if (mode === 'today') {
     return `${base}\n\n사용자의 오늘 할 일을 보고 하루 계획을 세워 줘. tasks에는 시간이 배치된 할 일을 돌려주되, 기존 할 일 제목은 그대로 쓰고 due는 오늘로 해. 새 할 일은 꼭 필요할 때만 추가해. message에 우선순위와 이유를 짧게 설명해.\n사용자 요청: ${text}${ctx}`;
   }
-  return `${base}\n\n사용자의 말을 할 일 목록으로 정리해 줘. 여러 개가 필요하면 나눠서 만들어.\n사용자: ${text}${ctx}`;
+  return `${base}
+
+사용자의 말을 할 일 목록으로 정리해 줘.
+- "준비", "정리", "계획"처럼 여러 단계가 필요한 요청이면 실제로 해야 할 구체적인 할 일 3~8개로 나눠. (예: 여행 준비 → 항공권 예약, 숙소 예약, 렌터카 예약, 환전, 짐 싸기)
+- 행사·마감 날짜가 있으면 각 할 일의 due를 그 날짜 이전으로 알맞게 나눠 배치하고, 행사 당일 할 일도 넣어.
+- 단순한 할 일 하나를 말한 거면 하나만 만들어.
+사용자: ${text}${ctx}`;
 }
 
 /* ---------------- helpers ---------------- */

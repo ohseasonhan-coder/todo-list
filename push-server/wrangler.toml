@@ -12,7 +12,7 @@ APP_URL = "https://ohseasonhan-coder.github.io/todo-list/"
 ALLOWED_ORIGINS = "https://ohseasonhan-coder.github.io,http://localhost:4400"
 VAPID_SUBJECT = "https://ohseasonhan-coder.github.io/todo-list/"
 VAPID_PUBLIC_KEY = "BLfN0iHBsTJOM6eZBajWI0tWw5QZiMCfnSGIjO5jUpFooH-SrtP2eh6YewJZyGfut0rC0CkEwKLkWhz9O7bQjJo"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 
 # 비밀값은 wrangler secret put 으로 넣음: VAPID_PRIVATE_JWK, GEMINI_API_KEY, AI_PASSCODE
 
